@@ -1,0 +1,6 @@
+{
+  "name": "Internet Speed Meter",
+  "description": "Premium real-time internet speed performance and data utilization instrument.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
