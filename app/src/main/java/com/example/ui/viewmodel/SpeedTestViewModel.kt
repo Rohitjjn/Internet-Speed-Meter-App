@@ -55,7 +55,12 @@ data class SpeedTestState(
     /** True when a second endpoint had to be used because the first one was unreachable. */
     val usedFallback: Boolean = false,
     /** Set when the user must confirm the expected mobile-data cost before starting. */
-    val pendingConfirmationMb: Int? = null
+    val pendingConfirmationMb: Int? = null,
+    /**
+     * True when the run was stopped on purpose (user, or a network change mid-test) rather
+     * than by a real failure — the UI must not report "could not finish" for that.
+     */
+    val aborted: Boolean = false
 ) {
     val isRunning: Boolean
         get() = phase == SpeedTestPhase.PING ||
@@ -223,6 +228,7 @@ class SpeedTestViewModel(application: Application) : AndroidViewModel(applicatio
                         liveBitsPerSecond = 0.0,
                         phaseProgress = 0f,
                         error = aborted.message ?: "Test stopped",
+                        aborted = true,
                         finishedAtMillis = System.currentTimeMillis()
                     )
                 }

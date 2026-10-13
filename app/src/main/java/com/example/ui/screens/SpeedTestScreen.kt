@@ -324,7 +324,11 @@ fun SpeedTestScreen(
                         )
                         Column {
                             Text(
-                                text = "Could not finish the test",
+                                text = if (state.aborted) {
+                                    "Test stopped"
+                                } else {
+                                    "Could not finish the test"
+                                },
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onBackground
@@ -487,7 +491,7 @@ private fun phaseLabel(phase: SpeedTestPhase, state: SpeedTestState): String = w
     SpeedTestPhase.DOWNLOAD -> "MEASURING DOWNLOAD…"
     SpeedTestPhase.UPLOAD -> "MEASURING UPLOAD…"
     SpeedTestPhase.DONE -> "TEST COMPLETE"
-    SpeedTestPhase.ERROR -> "TEST STOPPED"
+    SpeedTestPhase.ERROR -> if (state.aborted) "TEST STOPPED" else "TEST FAILED"
 }
 
 /** How far the current phase (8 s download / 6 s upload) is through its time budget. */
