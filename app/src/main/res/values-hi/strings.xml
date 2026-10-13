@@ -1,0 +1,26 @@
+<resources>
+    <!--
+        Hindi (hi) — the largest part of this app's audience.
+        Only the strings that are *already* extracted from the Compose code are translated
+        here; body copy is still hard-coded in Kotlin and will follow in the dedicated
+        strings refactor (see docs/next-loop-prompt.md).
+    -->
+    <string name="app_name">इंटरनेट स्पीड मीटर</string>
+
+    <string name="notification_channel_name">लाइव स्पीड टिकर</string>
+    <string name="notification_channel_description">स्टेटस बार में रीयल-टाइम इंटरनेट स्पीड दिखाता है।</string>
+    <string name="notification_speed_title">↓ %1$s  ↑ %2$s</string>
+    <string name="notification_text">%1$s · आज %2$s</string>
+    <string name="notification_paused_suffix"> · रुका हुआ</string>
+
+    <string name="network_wifi">वाई-फ़ाई</string>
+    <string name="network_mobile">मोबाइल</string>
+    <string name="network_ethernet">ईथरनेट</string>
+    <string name="network_vpn">वीपीएन</string>
+    <string name="network_offline">ऑफ़लाइन</string>
+
+    <string name="nav_speed">स्पीड</string>
+    <string name="nav_test">टेस्ट</string>
+    <string name="nav_history">इतिहास</string>
+    <string name="nav_settings">सेटिंग्स</string>
+</resources>

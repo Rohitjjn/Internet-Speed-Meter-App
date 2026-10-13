@@ -29,6 +29,36 @@ data class ThroughputResult(
     val megabytesPerSecond: Double get() = bytes / 1024.0 / 1024.0 / (durationMs / 1000.0)
 }
 
+/** Thrown when a running test is stopped on purpose (not a failure of the connection). */
+class TestAbortedException(message: String) : Exception(message)
+
+/**
+ * Cooperative abort flag shared by the phases of one test run.
+ *
+ * Coroutine cancellation alone cannot interrupt a **blocking socket read**, which would
+ * let a Wi-Fi → mobile switch keep downloading on the user's metered data for seconds.
+ * The read loops therefore poll this flag and bail out immediately.
+ */
+class TestAbortSignal {
+
+    @Volatile
+    var isAborted: Boolean = false
+        private set
+
+    @Volatile
+    var reason: String? = null
+        private set
+
+    fun abort(reason: String) {
+        this.reason = reason
+        this.isAborted = true
+    }
+
+    fun throwIfAborted() {
+        if (isAborted) throw TestAbortedException(reason ?: "Test stopped")
+    }
+}
+
 /**
  * The **active** measurement: this is the part that answers "what is my actual internet
  * speed right now?" the way dedicated speed-test apps do, instead of only observing the
@@ -38,10 +68,14 @@ data class ThroughputResult(
  *
  *  - **Latency / jitter** — one throw-away warm-up request (pays for DNS + TCP + TLS),
  *    then measured round trips; jitter = mean absolute difference of consecutive samples.
- *  - **Download** — several parallel `GET` streams from Cloudflare's public speed
- *    endpoint, counting the bytes that actually arrive, for a fixed time budget.
+ *  - **Download** — several parallel `GET` streams, counting the bytes that actually
+ *    arrive, for a fixed time budget.
  *  - **Upload** — several parallel chunked `POST` streams, counting the bytes the socket
  *    actually accepted.
+ *
+ * The endpoint is a [TestServer] profile (see [SpeedTestServers]) so the test survives a
+ * blocked host, and every phase takes a [TestAbortSignal] so a network change mid-test
+ * can stop it instantly.
  *
  * Throughput is reported as `bits × 8 / seconds` (decimal Mbps) — the unit ISPs advertise.
  * Multi-stream on purpose: a single TCP stream often cannot saturate a fast connection,
@@ -51,12 +85,6 @@ data class ThroughputResult(
  * test endpoint, and it runs **only** when the user taps "Start test".
  */
 object SpeedTestEngine {
-
-    const val SERVER_NAME = "speed.cloudflare.com"
-
-    private const val DOWNLOAD_ENDPOINT = "https://speed.cloudflare.com/__down"
-    private const val UPLOAD_ENDPOINT = "https://speed.cloudflare.com/__up"
-    private const val LATENCY_ENDPOINT = "https://speed.cloudflare.com/__down?bytes=0"
 
     private const val CONNECT_TIMEOUT_MS = 10_000
     private const val READ_TIMEOUT_MS = 10_000
@@ -70,35 +98,39 @@ object SpeedTestEngine {
     const val UPLOAD_STREAMS = 3
 
     /** Round-trip latency + jitter. Throws [IOException] when the server is unreachable. */
-    suspend fun measureLatency(onSample: (Long) -> Unit = {}): LatencyResult =
-        withContext(Dispatchers.IO) {
-            // Warm-up: pays for DNS/TCP/TLS so the measured samples are pure round trips.
-            runCatching { probeLatency() }
+    suspend fun measureLatency(
+        server: TestServer = SpeedTestServers.CLOUDFLARE,
+        abort: TestAbortSignal = TestAbortSignal(),
+        onSample: (Long) -> Unit = {}
+    ): LatencyResult = withContext(Dispatchers.IO) {
+        // Warm-up: pays for DNS/TCP/TLS so the measured samples are pure round trips.
+        runCatching { probeLatency(server.latencyUrl) }
 
-            val samples = ArrayList<Long>(LATENCY_ATTEMPTS)
-            repeat(LATENCY_ATTEMPTS) {
-                val sample = runCatching { probeLatency() }.getOrNull()
-                if (sample != null) {
-                    samples += sample
-                    onSample(sample)
-                }
-                delay(100L)
+        val samples = ArrayList<Long>(LATENCY_ATTEMPTS)
+        repeat(LATENCY_ATTEMPTS) {
+            abort.throwIfAborted()
+            val sample = runCatching { probeLatency(server.latencyUrl) }.getOrNull()
+            if (sample != null) {
+                samples += sample
+                onSample(sample)
             }
-            if (samples.isEmpty()) {
-                throw IOException("No response from $SERVER_NAME")
-            }
-            val sorted = samples.sorted()
-            LatencyResult(
-                minMs = sorted.first(),
-                averageMs = (samples.sum().toDouble() / samples.size).toLong(),
-                jitterMs = jitterOf(samples),
-                samples = samples.size
-            )
+            delay(100L)
         }
+        if (samples.isEmpty()) {
+            throw IOException("No response from ${server.host}")
+        }
+        val sorted = samples.sorted()
+        LatencyResult(
+            minMs = sorted.first(),
+            averageMs = (samples.sum().toDouble() / samples.size).toLong(),
+            jitterMs = jitterOf(samples),
+            samples = samples.size
+        )
+    }
 
-    private fun probeLatency(): Long {
+    private fun probeLatency(url: String): Long {
         val startedAt = System.nanoTime()
-        val connection = open(LATENCY_ENDPOINT)
+        val connection = open(url)
         return try {
             val code = connection.responseCode
             if (code !in 200..399) throw IOException("Latency probe failed (HTTP $code)")
@@ -120,11 +152,14 @@ object SpeedTestEngine {
 
     /**
      * Download throughput. [onProgress] receives (bits/second, fraction of the phase).
-     * Throws [IOException] when not a single byte could be measured.
+     * Throws [IOException] when not a single byte could be measured, [TestAbortedException]
+     * when the test was stopped.
      */
     suspend fun measureDownload(
+        server: TestServer = SpeedTestServers.CLOUDFLARE,
         durationMs: Long = DEFAULT_DOWNLOAD_MS,
         streams: Int = DOWNLOAD_STREAMS,
+        abort: TestAbortSignal = TestAbortSignal(),
         onProgress: (Double, Float) -> Unit = { _, _ -> }
     ): ThroughputResult = withContext(Dispatchers.IO) {
         coroutineScope {
@@ -140,18 +175,18 @@ object SpeedTestEngine {
             val jobs = (0 until streams).map { index ->
                 async(Dispatchers.IO) {
                     var request = 0
-                    while (isActive && elapsedMs(startNs) < durationMs) {
+                    while (isActive && !abort.isAborted && elapsedMs(startNs) < durationMs) {
                         // A different size per request keeps caches/proxies honest.
                         val size = 20_000_000L + index * 1_000_000L + request * 250_000L
                         val connection = try {
-                            open("$DOWNLOAD_ENDPOINT?bytes=$size")
+                            open(server.downloadUrl(size))
                         } catch (e: Exception) {
                             return@async
                         }
                         try {
                             connection.inputStream.use { input ->
                                 val buffer = ByteArray(BUFFER_SIZE)
-                                while (isActive && elapsedMs(startNs) < durationMs) {
+                                while (isActive && !abort.isAborted && elapsedMs(startNs) < durationMs) {
                                     val read = try {
                                         input.read(buffer)
                                     } catch (e: Exception) {
@@ -175,7 +210,7 @@ object SpeedTestEngine {
                 }
             }
 
-            while (elapsedMs(startNs) < durationMs) {
+            while (elapsedMs(startNs) < durationMs && !abort.isAborted) {
                 delay(PROGRESS_INTERVAL_MS)
                 val nowNs = System.nanoTime()
                 val bytes = counter.get()
@@ -189,6 +224,7 @@ object SpeedTestEngine {
             val measuredMs = ((endNs - startNs) / 1_000_000L).coerceAtLeast(1L)
             jobs.forEach { it.cancel() }
             val bytes = counter.get()
+            abort.throwIfAborted()
             if (bytes <= 0L) throw IOException("Download failed — the test server sent no data")
             val firstNs = firstByteNs.get()
             val activeMs = if (firstNs > 0L) {
@@ -207,13 +243,20 @@ object SpeedTestEngine {
 
     /**
      * Upload throughput. Counts the bytes the socket accepted; [onProgress] receives
-     * (bits/second, fraction of the phase). Throws [IOException] when nothing was sent.
+     * (bits/second, fraction of the phase). Throws [IOException] when nothing was sent,
+     * [TestAbortedException] when the test was stopped.
      */
     suspend fun measureUpload(
+        server: TestServer = SpeedTestServers.CLOUDFLARE,
         durationMs: Long = DEFAULT_UPLOAD_MS,
         streams: Int = UPLOAD_STREAMS,
+        abort: TestAbortSignal = TestAbortSignal(),
         onProgress: (Double, Float) -> Unit = { _, _ -> }
     ): ThroughputResult = withContext(Dispatchers.IO) {
+        val uploadUrl = server.uploadUrl
+        if (uploadUrl.isNullOrBlank()) {
+            throw IOException("${server.host} cannot accept uploads")
+        }
         coroutineScope {
             val counter = AtomicLong(0L)
             val startNs = System.nanoTime()
@@ -225,7 +268,7 @@ object SpeedTestEngine {
             val jobs = (0 until streams).map {
                 async(Dispatchers.IO) {
                     val connection = try {
-                        open(UPLOAD_ENDPOINT).apply {
+                        open(uploadUrl).apply {
                             requestMethod = "POST"
                             doOutput = true
                             setChunkedStreamingMode(BUFFER_SIZE)
@@ -236,7 +279,7 @@ object SpeedTestEngine {
                     }
                     try {
                         connection.outputStream.use { output ->
-                            while (isActive && elapsedMs(startNs) < durationMs) {
+                            while (isActive && !abort.isAborted && elapsedMs(startNs) < durationMs) {
                                 output.write(payload)
                                 if (firstByteNs.get() == 0L) {
                                     firstByteNs.compareAndSet(0L, System.nanoTime())
@@ -254,7 +297,7 @@ object SpeedTestEngine {
                 }
             }
 
-            while (elapsedMs(startNs) < durationMs) {
+            while (elapsedMs(startNs) < durationMs && !abort.isAborted) {
                 delay(PROGRESS_INTERVAL_MS)
                 val nowNs = System.nanoTime()
                 val bytes = counter.get()
@@ -268,6 +311,7 @@ object SpeedTestEngine {
             val measuredMs = ((endNs - startNs) / 1_000_000L).coerceAtLeast(1L)
             jobs.forEach { it.cancel() }
             val bytes = counter.get()
+            abort.throwIfAborted()
             if (bytes <= 0L) throw IOException("Upload failed — nothing could be sent")
             val firstNs = firstByteNs.get()
             val activeMs = if (firstNs > 0L) {
@@ -303,7 +347,7 @@ object SpeedTestEngine {
         connection.instanceFollowRedirects = true
         connection.useCaches = false
         connection.setRequestProperty("Cache-Control", "no-cache, no-store")
-        connection.setRequestProperty("User-Agent", "InternetSpeedMeter/1.1 (Android)")
+        connection.setRequestProperty("User-Agent", "InternetSpeedMeter/1.2 (Android)")
         return connection
     }
 }

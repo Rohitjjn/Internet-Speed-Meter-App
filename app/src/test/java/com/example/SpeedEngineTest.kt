@@ -253,6 +253,27 @@ class SpeedEngineTest {
     }
 
     @Test
+    fun anAbsurdCounterJumpIsRefusedInsteadOfChargedToTheSession() {
+        val engine = engine()
+        engine.setTransport(Transport.WIFI)
+        engine.seed(SpeedSample(0L, 0L, 0L))
+
+        // A kernel/OEM counter bug: the "delta" of one 1 s window claims 4 TiB.
+        val bogus = 4L * 1024L * 1024L * 1024L * 1024L
+        val published = engine.onSample(SpeedSample(bogus, 0L, 1_000L))
+        assertNull("an impossible jump must not be published", published)
+        assertEquals(0L, engine.snapshot().sessionRxBytes)
+        assertEquals(1L, engine.implausibleDeltas)
+        assertTrue(engine.attributedTotals().isEmpty())
+
+        // …and the next normal window measures again (the engine re-anchored).
+        val next = engine.onSample(SpeedSample(bogus + 100_000L, 0L, 2_000L))
+        assertNotNull(next)
+        assertEquals(100_000L, next!!.downloadBps)
+        assertEquals(100_000L, next.sessionRxBytes)
+    }
+
+    @Test
     fun transferBytesArithmeticIsSafe() {
         val a = TransferBytes(1_000L, 500L)
         val b = TransferBytes(400L, 100L)

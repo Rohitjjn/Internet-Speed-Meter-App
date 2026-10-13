@@ -53,6 +53,8 @@ import com.example.ui.util.secondary
 import com.example.ui.viewmodel.HistoryViewModel
 import com.example.util.BytesFormatter
 import com.example.util.DateFormatter
+import java.util.Locale
+import kotlin.math.roundToLong
 
 @Composable
 fun HistoryScreen(
@@ -60,6 +62,8 @@ fun HistoryScreen(
 ) {
     val historyList by viewModel.historyList.collectAsState()
     val monthlyTotalBytes by viewModel.monthlyTotalBytes.collectAsState()
+    val previousMonthTotalBytes by viewModel.previousMonthTotalBytes.collectAsState()
+    val monthLabel by viewModel.monthLabel.collectAsState()
 
     var showResetConfirmation by remember { mutableStateOf(false) }
     var showPurgeConfirmation by remember { mutableStateOf(false) }
@@ -235,7 +239,11 @@ fun HistoryScreen(
             }
 
             // ---------------- Pinned monthly summary ----------------
-            PinnedMonthlySummaryCard(totalBytes = monthlyTotalBytes)
+            PinnedMonthlySummaryCard(
+                totalBytes = monthlyTotalBytes,
+                previousMonthBytes = previousMonthTotalBytes,
+                monthLabel = monthLabel
+            )
         }
     }
 }
@@ -343,8 +351,17 @@ fun HistoryRowItem(
     }
 }
 
+/**
+ * Pinned recap: this month's real total plus how it compares with the previous month.
+ * The delta is only shown when the previous month has rows — otherwise the app would be
+ * comparing against data it never measured.
+ */
 @Composable
-fun PinnedMonthlySummaryCard(totalBytes: Long) {
+fun PinnedMonthlySummaryCard(
+    totalBytes: Long,
+    previousMonthBytes: Long = 0L,
+    monthLabel: String = ""
+) {
     val isDark = isDarkModeActive()
     val cardColor = if (isDark) Color(0xFFF2F4F8) else Color(0xFF15181D)
     val onCard = if (isDark) Color(0xFF15181D) else Color(0xFFF5F6F8)
@@ -377,7 +394,7 @@ fun PinnedMonthlySummaryCard(totalBytes: Long) {
             ) {
                 Column {
                     Text(
-                        text = "THIS MONTH",
+                        text = if (monthLabel.isBlank()) "THIS MONTH" else "THIS MONTH · ${monthLabel.uppercase(Locale.getDefault())}",
                         fontSize = 9.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -391,6 +408,16 @@ fun PinnedMonthlySummaryCard(totalBytes: Long) {
                         fontWeight = FontWeight.SemiBold,
                         color = onCard
                     )
+                    if (previousMonthBytes > 0L) {
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            text = monthDeltaLabel(totalBytes, previousMonthBytes),
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = onCard.copy(alpha = 0.75f),
+                            modifier = Modifier.testTag("month_delta_text")
+                        )
+                    }
                 }
                 Text(
                     text = BytesFormatter.format(totalBytes),
@@ -402,5 +429,21 @@ fun PinnedMonthlySummaryCard(totalBytes: Long) {
                 )
             }
         }
+    }
+}
+
+/**
+ * "↓ 12% vs last month" / "↑ 30% vs last month" / "same as last month".
+ * Percentages are computed from the two real month totals only.
+ */
+internal fun monthDeltaLabel(current: Long, previous: Long): String {
+    if (previous <= 0L) return ""
+    if (current == 0L) return "no usage yet vs last month"
+    val delta = (current - previous).toDouble() / previous.toDouble() * 100.0
+    val percent = kotlin.math.abs(delta).roundToLong()
+    return when {
+        percent == 0L -> "same as last month"
+        delta > 0 -> "\u2191 $percent% vs last month"
+        else -> "\u2193 $percent% vs last month"
     }
 }

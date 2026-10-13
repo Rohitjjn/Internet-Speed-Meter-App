@@ -103,6 +103,9 @@ class PreferencesManager(private val context: Context) {
         val KEY_LAST_SPEED_DOWN = longPreferencesKey("last_speed_down")
         val KEY_LAST_SPEED_UP = longPreferencesKey("last_speed_up")
         val KEY_SPEED_TEST_RESULTS = stringPreferencesKey("speed_test_results")
+        val KEY_TEST_SERVER = stringPreferencesKey("test_server")
+        val KEY_TEST_SERVER_URL = stringPreferencesKey("test_server_url")
+        val KEY_TEST_SERVER_FLAVOUR = stringPreferencesKey("test_server_flavour")
     }
 
     /**
@@ -239,5 +242,27 @@ class PreferencesManager(private val context: Context) {
 
     suspend fun clearSpeedTestResults() {
         context.dataStore.edit { it[KEY_SPEED_TEST_RESULTS] = "" }
+    }
+
+    // ---------- Active speed-test endpoint ----------
+
+    /**
+     * Which measurement endpoint the opt-in test uses: `AUTO` (Cloudflare, fall back to
+     * LibreSpeed when the host is blocked), an explicit built-in host, or `CUSTOM`.
+     */
+    val testServerFlow: Flow<String> = data.map { it[KEY_TEST_SERVER] ?: "AUTO" }
+
+    val testServerUrlFlow: Flow<String> = data.map { it[KEY_TEST_SERVER_URL] ?: "" }
+
+    val testServerFlavourFlow: Flow<String> = data.map {
+        it[KEY_TEST_SERVER_FLAVOUR] ?: "CLOUDFLARE"
+    }
+
+    suspend fun saveTestServer(preference: String, customUrl: String, flavour: String) {
+        context.dataStore.edit {
+            it[KEY_TEST_SERVER] = preference
+            it[KEY_TEST_SERVER_URL] = customUrl
+            it[KEY_TEST_SERVER_FLAVOUR] = flavour
+        }
     }
 }

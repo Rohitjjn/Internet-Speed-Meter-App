@@ -62,6 +62,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.R
 import com.example.services.SpeedMeterService
+import com.example.services.SpeedTestServers
 import com.example.ui.theme.AccentViolet
 import com.example.ui.theme.AccentVioletDark
 import com.example.util.BytesFormatter
@@ -98,10 +99,20 @@ fun SettingsScreen(
     val liveSpeed by SpeedMeterService.liveSpeedFlow.collectAsState()
     val engineStatus by SpeedMeterService.engineStatusFlow.collectAsState()
     val serviceRunning by SpeedMeterService.isServiceRunning.collectAsState()
+    // Collected (not read once with `.value`), otherwise this row never refreshes.
+    val networkType by SpeedMeterService.networkTypeFlow.collectAsState()
+    val storedTestServer by viewModel.testServer.collectAsState()
+    val storedTestServerUrl by viewModel.testServerUrl.collectAsState()
+    val storedTestServerFlavour by viewModel.testServerFlavour.collectAsState()
 
     var mobileLimitText by remember { mutableStateOf("") }
     var mobileLimitUnit by remember { mutableStateOf("GB") }
     var isLimitInitialized by remember { mutableStateOf(false) }
+
+    var serverPreference by remember { mutableStateOf(SpeedTestServers.ID_AUTO) }
+    var customServerUrl by remember { mutableStateOf("") }
+    var customServerFlavour by remember { mutableStateOf(SpeedTestServers.FLAVOUR_CLOUDFLARE) }
+    var isServerInitialized by remember { mutableStateOf(false) }
 
     var hasUsagePermission by remember { mutableStateOf(checkUsageStatsPermission(context)) }
     var hasNotificationPermission by remember { mutableStateOf(checkNotificationPermission(context)) }
@@ -121,6 +132,15 @@ fun SettingsScreen(
     LaunchedEffect(Unit) {
         hasUsagePermission = checkUsageStatsPermission(context)
         hasNotificationPermission = checkNotificationPermission(context)
+    }
+
+    LaunchedEffect(storedTestServer, storedTestServerUrl, storedTestServerFlavour) {
+        if (!isServerInitialized) {
+            serverPreference = storedTestServer
+            customServerUrl = storedTestServerUrl
+            customServerFlavour = storedTestServerFlavour
+            isServerInitialized = true
+        }
     }
 
     val liveAccent = if (isDarkModeActive()) LiveGreenDark else LiveGreen
@@ -530,6 +550,164 @@ fun SettingsScreen(
                 }
             }
 
+            // ---------------- SPEED TEST SERVER ----------------
+            SectionLabel("SPEED TEST SERVER", top = 18.dp)
+            GlassCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .testTag("test_server_card")
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Where the opt-in test measures",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = "Some networks and corporate DNS servers block one host. AUTO tries " +
+                            "${SpeedTestServers.CLOUDFLARE.host} first and falls back to " +
+                            "${SpeedTestServers.LIBRESPEED.host} when it cannot be reached; the test " +
+                            "always shows which host the numbers came from.",
+                        fontSize = 11.sp,
+                        color = secondary()
+                    )
+                    Text(
+                        text = buildString {
+                            append("Saved: ")
+                            append(storedTestServer)
+                            if (storedTestServer == SpeedTestServers.ID_CUSTOM) {
+                                append(" · ")
+                                append(storedTestServerUrl.ifBlank { "no URL yet" })
+                            }
+                        },
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        color = liveAccent,
+                        modifier = Modifier.testTag("saved_server_label")
+                    )
+                    ServerOptionRow(
+                        title = "AUTO",
+                        subtitle = "Cloudflare, with LibreSpeed as fallback",
+                        selected = serverPreference == SpeedTestServers.ID_AUTO,
+                        onClick = { serverPreference = SpeedTestServers.ID_AUTO },
+                        testTag = "server_option_auto"
+                    )
+                    ServerOptionRow(
+                        title = SpeedTestServers.CLOUDFLARE.host,
+                        subtitle = "Cloudflare only",
+                        selected = serverPreference == SpeedTestServers.ID_CLOUDFLARE,
+                        onClick = { serverPreference = SpeedTestServers.ID_CLOUDFLARE },
+                        testTag = "server_option_cloudflare"
+                    )
+                    ServerOptionRow(
+                        title = SpeedTestServers.LIBRESPEED.host,
+                        subtitle = "LibreSpeed public backend only",
+                        selected = serverPreference == SpeedTestServers.ID_LIBRESPEED,
+                        onClick = { serverPreference = SpeedTestServers.ID_LIBRESPEED },
+                        testTag = "server_option_librespeed"
+                    )
+                    ServerOptionRow(
+                        title = "Custom host",
+                        subtitle = "Your own Cloudflare- or LibreSpeed-compatible endpoint",
+                        selected = serverPreference == SpeedTestServers.ID_CUSTOM,
+                        onClick = { serverPreference = SpeedTestServers.ID_CUSTOM },
+                        testTag = "server_option_custom"
+                    )
+
+                    if (serverPreference == SpeedTestServers.ID_CUSTOM) {
+                        HorizontalDivider(color = glassBorder.copy(alpha = 0.5f))
+                        OutlinedTextField(
+                            value = customServerUrl,
+                            onValueChange = { customServerUrl = it.trim() },
+                            placeholder = { Text("https://myserver.example") },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = glassBorder,
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("custom_server_url_input")
+                        )
+                        ServerOptionRow(
+                            title = "Cloudflare-style",
+                            subtitle = "/__down?bytes=N and /__up",
+                            selected = customServerFlavour == SpeedTestServers.FLAVOUR_CLOUDFLARE,
+                            onClick = { customServerFlavour = SpeedTestServers.FLAVOUR_CLOUDFLARE },
+                            testTag = "server_flavour_cloudflare"
+                        )
+                        ServerOptionRow(
+                            title = "LibreSpeed-style",
+                            subtitle = "backend/garbage.php and backend/empty.php",
+                            selected = customServerFlavour == SpeedTestServers.FLAVOUR_LIBRESPEED,
+                            onClick = { customServerFlavour = SpeedTestServers.FLAVOUR_LIBRESPEED },
+                            testTag = "server_flavour_librespeed"
+                        )
+                        val resolved = SpeedTestServers.custom(customServerUrl, customServerFlavour)
+                        Text(
+                            text = if (resolved == null) {
+                                "Enter a full http(s) URL — until then the default Cloudflare host is used."
+                            } else {
+                                "Test will talk to ${resolved.host}"
+                            },
+                            fontSize = 10.sp,
+                            color = if (resolved == null) AccentWarning else secondary()
+                        )
+                        Button(
+                            onClick = {
+                                viewModel.updateTestServer(
+                                    SpeedTestServers.ID_CUSTOM,
+                                    customServerUrl,
+                                    customServerFlavour
+                                )
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                                .testTag("save_custom_server_button"),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("SAVE ENDPOINT", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    if (serverPreference != SpeedTestServers.ID_CUSTOM) {
+                        Button(
+                            onClick = {
+                                viewModel.updateTestServer(
+                                    serverPreference,
+                                    customServerUrl,
+                                    customServerFlavour
+                                )
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                                .testTag("save_server_button"),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("SAVE SERVER", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
             // ---------------- MEASUREMENT ENGINE ----------------
             SectionLabel("MEASUREMENT ENGINE", top = 18.dp)
             GlassCard(
@@ -552,7 +730,8 @@ fun SettingsScreen(
                     EngineRow("Counter source", engineStatus.source.label)
                     EngineRow("Read cadence", "500 ms · publish ${liveSpeed.windowMs} ms window")
                     EngineRow("Samples this session", liveSpeed.samplesTaken.toString())
-                    EngineRow("Network", networkTypeLabel(SpeedMeterService.networkTypeFlow.value))
+                    EngineRow("Last published window", "${liveSpeed.windowMs} ms")
+                    EngineRow("Network", networkTypeLabel(networkType))
                     EngineRow(
                         "Raw counters",
                         "rx ${BytesFormatter.format(liveSpeed.sessionRxBytes)} · tx ${BytesFormatter.format(liveSpeed.sessionTxBytes)}"
@@ -661,6 +840,52 @@ fun SettingsScreen(
             shape = RoundedCornerShape(24.dp),
             containerColor = MaterialTheme.colorScheme.surface
         )
+    }
+}
+
+/**
+ * One selectable endpoint option: a small ring plus title/subtitle. Used instead of a
+ * segmented control because the labels are hosts, not two-letter units.
+ */
+@Composable
+private fun ServerOptionRow(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    testTag: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 9.dp)
+            .testTag(testTag),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(16.dp)
+                .clip(RoundedCornerShape(100.dp))
+                .border(
+                    width = if (selected) 5.dp else 1.dp,
+                    color = if (selected) MaterialTheme.colorScheme.primary else glassBorder,
+                    shape = RoundedCornerShape(100.dp)
+                )
+        )
+        Column {
+            Text(
+                text = title,
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Text(text = subtitle, fontSize = 10.sp, color = secondary())
+        }
     }
 }
 

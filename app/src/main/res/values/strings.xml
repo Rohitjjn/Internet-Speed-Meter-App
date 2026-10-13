@@ -1,3 +1,26 @@
 <resources>
     <string name="app_name">Internet Speed Meter</string>
+
+    <!--
+        Status-bar notification (the always-visible surface, so it is fully localizable).
+        Keep the arrow glyphs: they are language-neutral and read the same in Hindi.
+    -->
+    <string name="notification_channel_name">Live speed ticker</string>
+    <string name="notification_channel_description">Shows real-time internet speed in the status bar.</string>
+    <string name="notification_speed_title">↓ %1$s  ↑ %2$s</string>
+    <string name="notification_text">%1$s · Today %2$s</string>
+    <string name="notification_paused_suffix"> · paused</string>
+
+    <!-- Network names (notification + chips) -->
+    <string name="network_wifi">Wi-Fi</string>
+    <string name="network_mobile">Mobile</string>
+    <string name="network_ethernet">Ethernet</string>
+    <string name="network_vpn">VPN</string>
+    <string name="network_offline">Offline</string>
+
+    <!-- Bottom navigation -->
+    <string name="nav_speed">Speed</string>
+    <string name="nav_test">Test</string>
+    <string name="nav_history">History</string>
+    <string name="nav_settings">Settings</string>
 </resources>

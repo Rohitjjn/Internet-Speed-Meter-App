@@ -75,6 +75,21 @@ class ExampleUnitTest {
         assertEquals("Kbps", SpeedFormatter.splitBits(512_000.0).second)
     }
 
+    // ---------- gauge scale (speed test) ----------
+
+    @Test
+    fun theGaugeScaleGrowsWithTheObservedSpeedAndNeverShrinksBelowTheFloor() {
+        // A slow line gets a 10 Mbps dial with headroom, not a 1 Gbps one.
+        assertEquals(10f, com.example.ui.screens.niceCeilingMbps(0f), 0.0001f)
+        assertEquals(10f, com.example.ui.screens.niceCeilingMbps(9f), 0.0001f)
+        assertEquals(25f, com.example.ui.screens.niceCeilingMbps(21f), 0.0001f)
+        assertEquals(50f, com.example.ui.screens.niceCeilingMbps(44f), 0.0001f)
+        assertEquals(100f, com.example.ui.screens.niceCeilingMbps(95f), 0.0001f)
+        assertEquals(250f, com.example.ui.screens.niceCeilingMbps(240f), 0.0001f)
+        // Beyond the last calibrated step the dial stops growing (it stays readable).
+        assertEquals(2500f, com.example.ui.screens.niceCeilingMbps(9_000f), 0.0001f)
+    }
+
     // ---------- latency jitter (speed test) ----------
 
     @Test

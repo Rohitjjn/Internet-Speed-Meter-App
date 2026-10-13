@@ -124,7 +124,14 @@ class SpeedEngine(
     private val maxValidWindowMs: Long = 3_000L,
     private val smoothing: Double = 0.5,
     private val averageWindowMs: Long = 60_000L,
-    private val historySize: Int = 60
+    private val historySize: Int = 60,
+    /**
+     * Sanity ceiling for a **single** counter delta. 2 GiB inside one <= 3 s window means
+     * ~5.7 Gbit/s sustained, which no phone radio delivers — a delta above it can only be
+     * a kernel/OEM counter bug (overflow, re-initialised table, interface swap). Such a
+     * jump is refused instead of being charged to the session and the daily total.
+     */
+    private val maxPlausibleDeltaBytes: Long = 2L * 1024L * 1024L * 1024L
 ) {
 
     private var anchor: SpeedSample? = null
@@ -174,6 +181,10 @@ class SpeedEngine(
 
     @Volatile
     private var current = LiveSpeed()
+
+    /** How many absurd counter jumps were refused (diagnostics/tests). */
+    var implausibleDeltas: Long = 0L
+        private set
 
     private data class AverageSample(val atMs: Long, val dl: Long, val ul: Long)
 
@@ -290,6 +301,20 @@ class SpeedEngine(
         if (deltaRx < 0L || deltaTx < 0L) {
             // Counter went backwards: interface reset, source switch or device reboot.
             // Re-anchor silently — publishing here would be a fabricated spike.
+            pendingRx = 0L
+            pendingTx = 0L
+            windowAnchorMs = sample.atMs
+            windowWifiRx = 0L
+            windowWifiTx = 0L
+            windowMobileRx = 0L
+            windowMobileTx = 0L
+            return null
+        }
+
+        if (deltaRx > maxPlausibleDeltaBytes || deltaTx > maxPlausibleDeltaBytes) {
+            // Physically impossible jump (kernel counter anomaly). Refusing it keeps the
+            // session/daily totals and the chart honest; the next window measures normally.
+            implausibleDeltas++
             pendingRx = 0L
             pendingTx = 0L
             windowAnchorMs = sample.atMs

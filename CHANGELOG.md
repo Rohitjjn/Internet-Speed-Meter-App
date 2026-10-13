@@ -2,6 +2,74 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-10-13 · loop 3] — speed-test resilience, source-health extraction, premium polish
+### Fixed
+- **The active test could not survive a blocked host.** It now measures through an
+  endpoint profile (`TestServer`): `AUTO` tries Cloudflare first and retries on the
+  LibreSpeed public backend when the first host cannot answer the latency probe, while an
+  explicit choice pins one host. The result card shows **which** host produced the numbers,
+  and says so when the fallback was used. Settings gained a "Speed test server" card
+  (AUTO / Cloudflare / LibreSpeed / custom `http(s)` URL with a Cloudflare- or
+  LibreSpeed-style flavour).
+- **A test on mobile data can no longer silently spend ~30 MB.** On a metered connection
+  the app now asks first, with a real estimate computed from the measured line speed and
+  the actual phase durations (`TestDataCost`, floor 5 MB, +10 % protocol overhead). Wi-Fi
+  and Ethernet still start immediately.
+- **A network change mid-test stops the test.** A Wi-Fi → mobile switch (or a mobile-data
+  dropout) would otherwise mix two connections into one number *and* keep downloading on
+  the user's data plan. The phases poll a cooperative `TestAbortSignal` — coroutine
+  cancellation alone cannot interrupt a blocking socket read — so the run ends within a
+  fraction of a second with an explicit message.
+- **`onTimeout` no longer restarts in a tight loop.** Android 15+ `dataSync` budget
+  exhaustion is answered with a delayed restart (20 s) at most twice; after that the service
+  stops cleanly and hands over to a one-shot WorkManager retry (30 min), instead of burning
+  the remaining daily budget immediately.
+- **The status-bar glyph no longer allocates a bitmap per second.** The speed icon is drawn
+  into two ping-pong buffers (~83 KB ARGB each) — on a fast line the number changes almost
+  every publish, and that churn showed up as GC/battery noise.
+- `ExampleInstrumentedTest` asserted the namespace `com.example` instead of the real
+  applicationId, so it failed on every device; it now checks the app's own package.
+- Settings "Network" row read `networkTypeFlow.value` once during composition and never
+  refreshed; it is collected now.
+
+### Added
+- **`SourceHealth`** — the counter-source switch rule extracted from the service into a
+  pure, unit-tested class (`SourceHealthTest`): flap-free switching, rate-limited probes
+  (one extra `/proc/net/dev` read every 4th tick at most), "UNSUPPORTED ≠ 0 bytes" and
+  "a peer without a shadow is never judged alive".
+- **`SpeedEngine` plausibility ceiling** — a single delta above 2 GiB is refused and
+  re-anchored instead of being charged to the session and the daily total (a kernel counter
+  anomaly cannot invent petabytes any more).
+- **Instrumented, network-gated smoke test** for the live endpoint
+  (`SpeedTestEngineInstrumentedTest`): one stream / 2 s download, a latency probe and an
+  abort test; it *skips* (never fails) without a connection.
+- **`PreferencesManagerTest`** — DataStore round-trips for the unit, accent, reset baseline,
+  last speed, limit, the 20-entry speed-test history and the new endpoint choice.
+- **`TestServerTest`** — URL building for both flavours, candidate/fallback ordering,
+  unusable custom URLs degrading to the default host, and the data-cost estimate.
+- Hindi resources (`values-hi`) for the always-visible surfaces: the whole status-bar
+  notification, the network names and the bottom navigation.
+
+### Changed
+- **Gauge is now an instrument**: labelled value scale (0 → a ceiling derived from what the
+  run really measured), major/minor tick marks, a needle that sweeps to the live value, the
+  latency in the dial during the ping phase, and a separate thin bar for the phase's time
+  progress. No fake "max" is ever drawn.
+- Phase label cross-fades between phases, metric values animate to their readings instead of
+  popping in, and a **share** action (`ACTION_SEND` plain text: ↓/↑, ping, jitter, server,
+  timestamp) was added to the result card.
+- Hero card lost the developer-facing "LAST WINDOW / samples" stat (it moved into the
+  Settings diagnostics panel, next to the new "last published window" row).
+- **Dashboard is two-column from 600 dp** (tablet / landscape / foldable) instead of one
+  very wide column.
+- **History monthly recap** now compares this month with the previous month
+  ("↑ 12 % vs last month") — real totals only, and only when a previous month exists.
+
+### Docs
+- README, project blueprint and database schema updated for the endpoint profiles, the
+  metered-data confirmation, the abort rule, the timeout backoff and the localization
+  status; next-loop prompt regenerated from a fresh multi-perspective brainstorm.
+
 ## [2026-10-13 · loop 2] — measurement-engine redesign + real speed test
 ### Fixed — "speed not calculated correctly" (the reported bug)
 - **Download and upload can no longer show the same number.** Both are now computed from
