@@ -1,6 +1,10 @@
 package com.example.ui.screens
 
 import android.content.Context
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -70,6 +74,7 @@ import java.util.Locale
 
 sealed class Screen(val route: String, val title: String) {
     object Dashboard : Screen("dashboard", "Speed")
+    object SpeedTest : Screen("test", "Test")
     object History : Screen("history", "History")
     object Settings : Screen("settings", "Settings")
 }
@@ -128,6 +133,11 @@ fun MainScreen() {
         if (targetAlertLevel > effectiveDismissedMobile) {
             pendingMobileAlert = targetAlertLevel
         }
+    }
+
+    LaunchedEffect(pendingMobileAlert) {
+        val level = pendingMobileAlert ?: return@LaunchedEffect
+        vibrateLimitAlert(context, level)
     }
 
     if (pendingMobileAlert != null) {
@@ -202,6 +212,7 @@ fun MainScreen() {
                 modifier = Modifier.fillMaxSize()
             ) {
                 composable(Screen.Dashboard.route) { DashboardScreen() }
+                composable(Screen.SpeedTest.route) { SpeedTestScreen() }
                 composable(Screen.History.route) { HistoryScreen() }
                 composable(Screen.Settings.route) { SettingsScreen() }
             }
@@ -220,6 +231,7 @@ private fun FloatingGlassNavBar(
 ) {
     val items = listOf(
         Triple(Screen.Dashboard, R.drawable.ic_speed, "Speed"),
+        Triple(Screen.SpeedTest, R.drawable.ic_bolt, "Test"),
         Triple(Screen.History, R.drawable.ic_history, "History"),
         Triple(Screen.Settings, R.drawable.ic_settings, "Settings")
     )
@@ -297,6 +309,33 @@ private fun FloatingGlassNavBar(
                 }
             }
         }
+    }
+}
+
+/**
+ * A limit alert must be felt, not only seen: one short buzz at 50/90 %, a double buzz at
+ * 100 %. This is the *only* vibration in the app and it needs no permission prompt.
+ */
+private fun vibrateLimitAlert(context: Context, level: Long) {
+    try {
+        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val manager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+            manager?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        } ?: return
+        if (!vibrator.hasVibrator()) return
+        val pattern = if (level >= 100L) longArrayOf(0L, 140L, 90L, 140L) else longArrayOf(0L, 70L)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            vibrator.vibrate(VibrationEffect.createWaveform(pattern, -1))
+        } else {
+            @Suppress("DEPRECATION")
+            vibrator.vibrate(pattern, -1)
+        }
+    } catch (e: Exception) {
+        // Vibration is a nicety: never let it break the alert dialog.
+        e.printStackTrace()
     }
 }
 

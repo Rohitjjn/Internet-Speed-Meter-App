@@ -15,32 +15,66 @@ No third-party SDKs, no ads, no data leave the device.
 
 ## Real-time speed — how it actually works
 
-The engine (`app/src/main/java/com/example/services/SpeedMeterService.kt`) is a
-foreground service with a lean 1 Hz ticker:
+Two independent engines, both reporting **real measurements only**:
 
-- **Primary counter**: `TrafficStats` (total device traffic).
-- **Fallback counter**: `/proc/net/dev` (kernel totals). A health check
-  auto-switches between the two if a source goes stale (0/0 on cold start,
-  or ≥5 stagnant ticks) — this is why the app keeps reporting on OEM ROMs
-  where `TrafficStats` totals are restricted.
-- **Window guard**: a delta over a >4 s window means the service was
-  suspended (Doze); the app publishes `0` for that tick instead of a fake
-  spike — exactly like dedicated speed apps.
-- **Per-second history**: the last 60 seconds of download/upload samples are
-  kept in ring buffers (`dlHistoryFlow` / `ulHistoryFlow`) and rendered as a
-  live sparkline.
-- **Daily usage accounting runs on a separate slow (15 s) loop** so the hot
-  1 Hz path never touches Room or `NetworkStatsManager`.
+### 1. Passive live meter (always on)
+
+`services/SpeedMeterService.kt` runs a foreground service whose read loop samples the
+device counters **twice per second** and publishes **once per second**:
+
+| Step | What happens |
+|---|---|
+| read (500 ms) | `TrafficStats.getTotalRxBytes()/getTotalTxBytes()` — or `/proc/net/dev` when a ROM restricts them |
+| maths | `SpeedEngine` (pure Kotlin, fully unit-tested) turns the `(rx, tx)` deltas into bytes/second |
+| publish (~1 s) | `LiveSpeed` → dashboard, notification, diagnostics panel |
+
+Rules the engine guarantees (all covered by tests in `SpeedEngineTest`):
+
+- **Download and upload are truly independent.** Both always come from *one coherent
+  `(rx, tx)` read of one source*, computed as separate deltas — a download-heavy burst
+  can never be mirrored into the upload number (this was a real reported bug).
+- **The window is measured, never assumed.** Rate = bytes ÷ *actual* elapsed ms, so a
+  delayed tick produces a correct rate instead of a spike.
+- **No invented values.** A counter that goes *backwards* (interface reset, source
+  switch, reboot) re-anchors silently; a window longer than 3 s (process frozen by the
+  OS) publishes `0` and flags `PAUSED` in the UI instead of an averaged fake — though the
+  real bytes are still counted into the session totals.
+- **Source health without flapping.** Each source keeps its own anchor and is only
+  switched to when it is genuinely alive, so the old "compare absolute totals across two
+  different counters" bug (which flapped every few seconds) cannot happen.
+- **Transport is pushed, not polled.** A `ConnectivityManager.NetworkCallback` reports
+  Wi-Fi/mobile/Ethernet/VPN changes; the hot path does zero binder calls.
+- **Session + rolling stats**: session rx/tx, session duration, peaks, a 60 s average and
+  a 60-sample sparkline history.
+
+### 2. Active speed test (opt-in, one tap)
+
+The passive meter shows what the device is *using* (near 0 on an idle phone), which can
+never tell you the *capacity* of your line. Dashboard → **Test → START TEST** measures it
+for real over the network (plain `HttpURLConnection`, no third-party SDK):
+
+- **Latency + jitter** — 5 round trips after a throw-away warm-up request.
+- **Download** — 4 parallel streams from Cloudflare's public test endpoint for 8 s.
+- **Upload** — 3 parallel chunked POST streams for 6 s.
+- Result = `bits × 8 ÷ seconds`, shown in **Mbps** (the unit ISPs advertise), with the
+  last 20 results kept on-device.
+
+The test runs **only** when you tap the button; it sends no identifiers and stores
+nothing but the four numbers you can see.
 
 ### Daily usage ("Mobile today" / "Wi-Fi today")
 
-- With **Usage access** granted (Settings → Apps → Special access → Usage
-  access): real system-wide per-transport counters via
-  `NetworkStatsManager.querySummaryForDevice`, minus the "reset today"
-  baseline.
-- **Without** the permission: every 1 s tick's bytes are attributed to the
-  active transport (Wi-Fi / mobile) and accumulated — no permission, no
-  `READ_PHONE_STATE`, no `INTERNET` permission at all.
+- With **Usage access** granted (Settings → Apps → Special access → Usage access): real
+  system-wide per-transport counters via
+  `NetworkStatsManager.querySummaryForDevice`, minus the "reset today" baseline.
+- **Without** the permission: the engine's per-read deltas are attributed to the
+  transport that carried them and accumulated — no permission needed.
+
+### Verify it yourself
+
+Settings → **Measurement Engine** shows the engine's raw inputs: active counter source,
+read cadence, last window, session samples, and the kernel interface totals
+(`wlan0`, `rmnet_data0`, …). Nothing in that panel is estimated.
 
 ### Background behaviour (Android 15/16)
 
@@ -54,16 +88,18 @@ app update / device reboot — the boot receiver restarts it too).
 
 ## Features
 
-- ⚡ Live ↓/↑ speed (bytes-per-second, per second) with session peak
-- 📈 30-second sparkline (last 60 samples)
+- ⚡ Live ↓/↑ speed, measured twice a second, with digit-roll animation
+- 🧪 **Active speed test**: ping · jitter · download · upload (Mbps) + result history
+- 👥 Per-network split: real bytes attributed to Wi-Fi vs mobile while they happen
+- 📊 Session total, session peak, 1-minute average and 30-second sparkline
 - 📱 Mobile & Wi-Fi daily usage cards (real counters)
 - 🗓 History (all recorded days, newest first) + pinned monthly total, clear option
-- 🎚 Optional monthly **warning** limit (2 GB / 5 GB / 10 GB / custom) —
-  alerts at 50 % / 90 % / 100 % of the limit; the app never blocks data
-- 🌗 Glassy light + dark theme (GPT-style glassmorphism)
+- 🎚 Optional daily mobile **warning** limit (MB/GB) — alerts at 50 % / 90 % / 100 %
+  with a buzz; the app never blocks data
+- 🌗 Glassy light + dark theme (GPT-style glassmorphism) + accent picker
 - 🔔 Status-bar notification with live speed + custom speed glyph icon
-- 🧾 Privacy: no INTERNET, no ACCESS_WIFI_STATE, no READ_PHONE_STATE
-  permissions
+- 🧾 Privacy: no `ACCESS_WIFI_STATE` / `READ_PHONE_STATE`; `INTERNET` exists **only**
+  for the manual speed test, no analytics, no accounts, everything on-device
 
 ---
 
@@ -85,6 +121,13 @@ automatically on first sync.
 ```bash
 ./gradlew :app:testDebugUnitTest
 ```
+
+Covers the measurement core without a device: `SpeedEngineTest` (independent
+directions, measured windows, suspended-process guard, counter resets, per-transport
+attribution), `ExampleUnitTest` (formatters, bits/bytes modes, `/proc/net/dev` parser,
+jitter, result serialization), `AccountingTest` (reset baselines, clamping, midnight
+rollover), `HistoryDatabaseTest` (Room) and `DashboardUiSmokeTest` (Robolectric Compose
+render).
 
 ---
 
@@ -133,18 +176,21 @@ app/src/main/java/com/example/
 │   ├── DataUsageEntity.kt     # mobile/wifi rx+tx per day
 │   ├── DataUsageRepository.kt
 │   ├── NetworkStatsHelper.kt  # per-transport counters since midnight
-│   ├── PreferencesManager.kt  # DataStore: theme, limit, reset baseline
+│   ├── PreferencesManager.kt  # DataStore: theme, accent, unit, limit, baselines,
+│   │                          #   last speed, speed-test results
 │   └── UsageResetter.kt       # single reset path (service path uses its own)
 ├── services/
-│   ├── SpeedMeterService.kt   # the engine: 1 Hz ticker + 15 s accounting
-│   ├── TrafficCounterReader.kt# TrafficStats / /proc/net/dev + parser
+│   ├── SpeedMeterService.kt   # 500 ms read loop + 15 s accounting + notification
+│   ├── SpeedEngine.kt         # pure measurement maths (unit-tested, no Android)
+│   ├── TrafficCounterReader.kt# TrafficStats / /proc/net/dev + per-interface parser
+│   ├── SpeedTestEngine.kt     # active ping/download/upload measurement
 │   └── ServiceScheduler.kt    # WorkManager keep-alive + boot handling
 └── ui/
     ├── components/            # AppBackground, GlassCard, GlassChip, AppIcon
-    ├── screens/               # Dashboard, History, Settings, Intro, Splash
+    ├── screens/               # Dashboard, Speed Test, History, Settings, Intro, Splash
     ├── theme/                 # glass palettes (light + dark), Material 3
     ├── util/                  # secondary()/dlColor()/ulColor()/toBytes()
-    └── viewmodel/             # Dashboard / History / Settings VMs
+    └── viewmodel/             # Dashboard / SpeedTest / History / Settings VMs
 ```
 
 Docs: [`docs/database-schema.md`](docs/database-schema.md) ·

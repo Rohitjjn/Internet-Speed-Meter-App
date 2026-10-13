@@ -1,6 +1,6 @@
 {
   "name": "Internet Speed Meter",
-  "description": "Premium real-time internet speed performance and data utilization instrument.",
+  "description": "Real-time internet speed meter with an opt-in active speed test, live per-network rates and on-device data usage history.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }

@@ -49,6 +49,9 @@ val SpeedDownDark = Color(0xFF2FBF8B)
 val SpeedUp = Color(0xFF3E6FE0)          // upload blue
 val SpeedUpDark = Color(0xFF6C93F2)
 
+val AccentViolet = Color(0xFF7C5CE0)      // accent-picker violet (light)
+val AccentVioletDark = Color(0xFF9E8CF5)  // accent-picker violet (dark)
+
 val AccentWarning = Color(0xFFE8960C)
 val AccentDanger = Color(0xFFE5484D)
 val AccentDangerDark = Color(0xFFFF6369)

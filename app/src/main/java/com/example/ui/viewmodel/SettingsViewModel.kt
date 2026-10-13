@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.NetworkStatsHelper
 import com.example.data.PreferencesManager
 import com.example.data.UsageResetter
+import com.example.util.SpeedUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -28,12 +29,26 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val mobileLimitUnit: StateFlow<String> = preferencesManager.mobileLimitUnitFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "GB")
 
+    val speedUnit: StateFlow<SpeedUnit> = preferencesManager.speedUnitFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SpeedUnit.BYTES)
+
+    val accentKey: StateFlow<String> = preferencesManager.accentKeyFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "INK")
+
     fun toggleDarkMode(enabled: Boolean) {
         viewModelScope.launch { preferencesManager.setDarkMode(enabled) }
     }
 
     fun updateMobileLimit(limit: Double, unit: String) {
         viewModelScope.launch { preferencesManager.saveMobileLimit(limit, unit) }
+    }
+
+    fun updateSpeedUnit(unit: SpeedUnit) {
+        viewModelScope.launch { preferencesManager.setSpeedUnit(unit) }
+    }
+
+    fun updateAccent(key: String) {
+        viewModelScope.launch { preferencesManager.setAccentKey(key) }
     }
 
     fun resetTodayUsage() {

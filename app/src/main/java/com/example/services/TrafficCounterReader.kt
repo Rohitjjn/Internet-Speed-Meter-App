@@ -4,72 +4,85 @@ import android.net.TrafficStats
 import android.os.SystemClock
 import java.io.File
 
-/** One snapshot of device-wide counters: bytes received/sent + monotonic timestamp. */
-data class TrafficSample(
-    val rx: Long,
-    val tx: Long,
-    val timestampMs: Long
-) {
-    val total: Long get() = rx + tx
-    val isZero: Boolean get() = rx == 0L && tx == 0L
-
-    /** True when either counter advanced since [other]. */
-    fun movedFrom(other: TrafficSample): Boolean = rx > other.rx || tx > other.tx
-}
-
 enum class CounterSource(val label: String) {
     TRAFFIC_STATS("TrafficStats"),
     PROC_NET_DEV("/proc/net/dev"),
 }
 
 /**
- * Reads device-wide network counters from two independent sources.
+ * Network interface kinds, derived from the *kernel* interface name.
  *
- * This is what makes the meter report the REAL speed the way other speed-meter
- * apps do:
+ * Only used for diagnostics and for the (optional) per-interface detail view — the live
+ * speed itself comes from the device-wide counters, exactly like the system does it.
+ */
+enum class InterfaceKind {
+    LOOPBACK,
+    WIFI,
+    MOBILE,
+    ETHERNET,
+    TUNNEL,
+    OTHER,
+}
+
+/**
+ * Reads the device-wide network counters.
  *
- *  - [CounterSource.TRAFFIC_STATS] (primary): the same system-wide counters
- *    used by most speedometer apps. Works without special permissions.
- *  - [CounterSource.PROC_NET_DEV] (fallback): byte counters of every network
- *    interface parsed straight from the kernel. On some devices/ROMs the
- *    TrafficStats totals are restricted, stale or report 0 — the kernel file
- *    is the ground truth there.
+ * Two independent OS sources are supported, and the same physical truth is behind both:
  *
- * The ticker [SpeedMeterService] health-checks both sources every second and
- * automatically switches when the active one stops moving.
+ *  - [CounterSource.TRAFFIC_STATS] (primary): `TrafficStats.getTotalRxBytes()` /
+ *    `getTotalTxBytes()`. No permission needed. The kernel marks the counters
+ *    `UNSUPPORTED` (-1) on a few ROMs — that is detected per direction instead of being
+ *    silently reported as "0 bytes".
+ *  - [CounterSource.PROC_NET_DEV] (fallback): byte counters of every non-loopback
+ *    interface parsed straight from `/proc/net/dev`.
+ *
+ * The two directions are always read from *one* coherent pair of counters, so the
+ * download figure can never be mirrored into the upload figure.
  */
 object TrafficCounterReader {
 
-    /** Primary source: system-wide counters (ACCESS_NETWORK_STATE). */
-    fun readTrafficStats(): TrafficSample {
+    private const val PROC_NET_DEV_PATH = "/proc/net/dev"
+
+    fun read(source: CounterSource, atMs: Long = SystemClock.elapsedRealtime()): SpeedSample =
+        when (source) {
+            CounterSource.TRAFFIC_STATS -> readTrafficStats(atMs)
+            CounterSource.PROC_NET_DEV -> readProcNetDev(atMs)
+        }
+
+    fun other(source: CounterSource): CounterSource =
+        if (source == CounterSource.TRAFFIC_STATS) CounterSource.PROC_NET_DEV
+        else CounterSource.TRAFFIC_STATS
+
+    /** System-wide counters (all interfaces except loopback) via `TrafficStats`. */
+    fun readTrafficStats(atMs: Long = SystemClock.elapsedRealtime()): SpeedSample {
         return try {
-            TrafficSample(
-                rx = TrafficStats.getTotalRxBytes().coerceAtLeast(0L),
-                tx = TrafficStats.getTotalTxBytes().coerceAtLeast(0L),
-                timestampMs = SystemClock.elapsedRealtime()
+            val rx = TrafficStats.getTotalRxBytes()
+            val tx = TrafficStats.getTotalTxBytes()
+            SpeedSample(
+                rx = if (rx > 0L) rx else 0L,
+                tx = if (tx > 0L) tx else 0L,
+                atMs = atMs,
+                rxSupported = rx >= 0L,
+                txSupported = tx >= 0L
             )
         } catch (t: Throwable) {
-            TrafficSample(0L, 0L, SystemClock.elapsedRealtime())
+            SpeedSample(0L, 0L, atMs, rxSupported = false, txSupported = false)
         }
     }
 
-    /** Fallback source: sums bytes from /proc/net/dev across all non-loopback interfaces. */
-    fun readProcNetDev(): TrafficSample {
+    /** Kernel counters summed over every non-loopback interface in `/proc/net/dev`. */
+    fun readProcNetDev(atMs: Long = SystemClock.elapsedRealtime()): SpeedSample {
         return try {
-            val (rx, tx) = parseProcNetDev(File("/proc/net/dev").readText())
-            TrafficSample(rx, tx, SystemClock.elapsedRealtime())
+            val content = File(PROC_NET_DEV_PATH).readText()
+            val (rx, tx) = parseProcNetDev(content)
+            SpeedSample(rx = rx, tx = tx, atMs = atMs)
         } catch (t: Throwable) {
-            TrafficSample(0L, 0L, SystemClock.elapsedRealtime())
+            SpeedSample(0L, 0L, atMs, rxSupported = false, txSupported = false)
         }
-    }
-
-    fun read(source: CounterSource): TrafficSample = when (source) {
-        CounterSource.TRAFFIC_STATS -> readTrafficStats()
-        CounterSource.PROC_NET_DEV -> readProcNetDev()
     }
 
     /**
-     * Pure parser for /proc/net/dev (unit-testable).
+     * Pure parser for `/proc/net/dev` (unit-testable).
      *
      * File layout (example):
      * ```
@@ -83,21 +96,62 @@ object TrafficCounterReader {
     fun parseProcNetDev(content: String): Pair<Long, Long> {
         var rx = 0L
         var tx = 0L
+        for ((iface, bytes) in parseProcNetDevPerInterface(content)) {
+            if (iface == "lo") continue // loopback is not internet traffic
+            rx += bytes.rx
+            tx += bytes.tx
+        }
+        return rx to tx
+    }
+
+    /**
+     * Per-interface totals — used by the diagnostics panel so the user can see the raw
+     * counters the meter is built on (`wlan0`, `rmnet_data0`, …).
+     */
+    fun parseProcNetDevPerInterface(content: String): Map<String, TransferBytes> {
+        val result = LinkedHashMap<String, TransferBytes>()
         for (rawLine in content.lines()) {
             val line = rawLine.trim()
             if (line.isEmpty()) continue
             val colon = line.indexOf(':')
             if (colon <= 0) continue // header lines have no "iface:" marker
             val iface = line.substring(0, colon).trim()
-            if (iface == "lo") continue // skip loopback
+            if (iface.isEmpty()) continue
             val fields = line.substring(colon + 1)
                 .trim()
                 .split(Regex("\\s+"))
                 .filter { it.isNotEmpty() }
             if (fields.size < 9) continue
-            rx += fields[0].toLongOrNull() ?: 0L
-            tx += fields[8].toLongOrNull() ?: 0L
+            val rx = fields[0].toLongOrNull() ?: continue
+            val tx = fields[8].toLongOrNull() ?: continue
+            val previous = result[iface] ?: TransferBytes()
+            result[iface] = TransferBytes(previous.rx + rx, previous.tx + tx)
         }
-        return rx to tx
+        return result
+    }
+
+    /** Live per-interface snapshot for the diagnostics panel (empty when unreadable). */
+    fun readInterfaceTotals(): Map<String, TransferBytes> {
+        return try {
+            parseProcNetDevPerInterface(File(PROC_NET_DEV_PATH).readText())
+        } catch (t: Throwable) {
+            emptyMap()
+        }
+    }
+
+    fun interfaceKind(iface: String): InterfaceKind {
+        val name = iface.lowercase()
+        return when {
+            name.startsWith("lo") -> InterfaceKind.LOOPBACK
+            name.startsWith("wlan") || name.startsWith("ap") || name.startsWith("swlan") ->
+                InterfaceKind.WIFI
+            name.startsWith("rmnet") || name.startsWith("ccmni") || name.startsWith("pdp") ||
+                name.startsWith("wwan") || name.startsWith("clat") || name.startsWith("v4-") ->
+                InterfaceKind.MOBILE
+            name.startsWith("eth") || name.startsWith("rndis") -> InterfaceKind.ETHERNET
+            name.startsWith("tun") || name.startsWith("ppp") || name.startsWith("tap") ->
+                InterfaceKind.TUNNEL
+            else -> InterfaceKind.OTHER
+        }
     }
 }

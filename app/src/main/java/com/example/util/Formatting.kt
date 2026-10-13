@@ -5,32 +5,92 @@ import java.util.Date
 import java.util.Locale
 
 /**
+ * Display unit for live speeds.
+ *
+ * [BYTES] (KB/s, MB/s) is what most device meters show; [BITS] (Kbps, Mbps) is what ISPs
+ * and speed-test services advertise, so users can compare the meter with their plan.
+ * Daily data usage is always shown in bytes (MB/GB) — that is how data packs are sold.
+ */
+enum class SpeedUnit(val key: String) {
+    BYTES("BYTES"),
+    BITS("BITS");
+
+    companion object {
+        fun fromKey(key: String?): SpeedUnit =
+            entries.firstOrNull { it.key == key } ?: BYTES
+    }
+}
+
+/**
  * Pure formatting helpers (unit-testable, no Android dependencies).
  */
 object SpeedFormatter {
 
-    /** "12.4 MB/s" style value. */
-    fun format(bytesPerSec: Long): String {
-        val kb = bytesPerSec / 1024.0
-        return if (kb >= 1024.0) {
-            String.format(Locale.US, "%.1f MB/s", kb / 1024.0)
-        } else {
-            String.format(Locale.US, "%.0f KB/s", kb)
-        }
+    /** "12.4 MB/s" / "99.2 Mbps" style value. */
+    fun format(bytesPerSec: Long, unit: SpeedUnit = SpeedUnit.BYTES): String {
+        val (number, suffix) = split(bytesPerSec, unit)
+        return "$number $suffix"
     }
 
     /**
      * Splits the value into (number, unit) for large hero-style display.
-     * Example: (12.4, "MB/s") or (842, "KB/s").
+     * Example: (12.4, "MB/s") or (842, "KB/s") — or (99.2, "Mbps") in bits mode.
      */
-    fun split(bytesPerSec: Long): Pair<String, String> {
-        val kb = bytesPerSec / 1024.0
-        return if (kb >= 1024.0) {
-            val mb = kb / 1024.0
-            val number = if (mb >= 100.0) String.format(Locale.US, "%.0f", mb) else String.format(Locale.US, "%.1f", mb)
-            number to "MB/s"
+    fun split(bytesPerSec: Long, unit: SpeedUnit = SpeedUnit.BYTES): Pair<String, String> {
+        val safe = if (bytesPerSec > 0L) bytesPerSec else 0L
+        return when (unit) {
+            SpeedUnit.BYTES -> {
+                val kb = safe / 1024.0
+                if (kb >= 1024.0) {
+                    val mb = kb / 1024.0
+                    val number = if (mb >= 100.0) {
+                        String.format(Locale.US, "%.0f", mb)
+                    } else {
+                        String.format(Locale.US, "%.1f", mb)
+                    }
+                    number to "MB/s"
+                } else {
+                    kb.toInt().toString() to "KB/s"
+                }
+            }
+            SpeedUnit.BITS -> {
+                // Decimal (1000-based) kilobits/megabits — the unit ISPs advertise.
+                val kbps = safe * 8.0 / 1000.0
+                if (kbps >= 1000.0) {
+                    val mbps = kbps / 1000.0
+                    val number = if (mbps >= 100.0) {
+                        String.format(Locale.US, "%.0f", mbps)
+                    } else {
+                        String.format(Locale.US, "%.1f", mbps)
+                    }
+                    number to "Mbps"
+                } else {
+                    kbps.toInt().toString() to "Kbps"
+                }
+            }
+        }
+    }
+
+    /** "99.2 Mbps" style value straight from a bits-per-second measurement. */
+    fun formatBits(bitsPerSecond: Double): String {
+        val (number, suffix) = splitBits(bitsPerSecond)
+        return "$number $suffix"
+    }
+
+    /** (number, unit) for a bits-per-second value — used by the speed-test gauge. */
+    fun splitBits(bitsPerSecond: Double): Pair<String, String> {
+        val safe = if (bitsPerSecond > 0.0) bitsPerSecond else 0.0
+        val kbps = safe / 1000.0
+        return if (kbps >= 1000.0) {
+            val mbps = kbps / 1000.0
+            val number = if (mbps >= 100.0) {
+                String.format(Locale.US, "%.0f", mbps)
+            } else {
+                String.format(Locale.US, "%.1f", mbps)
+            }
+            number to "Mbps"
         } else {
-            kb.toInt().toString() to "KB/s"
+            kbps.toInt().toString() to "Kbps"
         }
     }
 }
