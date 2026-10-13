@@ -384,6 +384,8 @@ private fun SpeedGauge(
         label = "speed_test_gauge_value"
     )
     val (number, unit) = SpeedFormatter.splitBits(animatedBits.toDouble())
+    // Resolve the composable theme value before entering Canvas's non-composable draw scope.
+    val gaugeTrackColor = glassBorder.copy(alpha = 0.6f)
 
     Box(
         modifier = Modifier.size(224.dp),
@@ -398,7 +400,7 @@ private fun SpeedGauge(
             val sweep = 270f
 
             drawArc(
-                color = glassBorder.copy(alpha = 0.6f),
+                color = gaugeTrackColor,
                 startAngle = startAngle,
                 sweepAngle = sweep,
                 useCenter = false,
