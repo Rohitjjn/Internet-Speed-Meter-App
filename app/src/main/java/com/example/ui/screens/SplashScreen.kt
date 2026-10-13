@@ -93,7 +93,7 @@ fun SplashScreen(
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground,
-                    alpha = alpha.value
+                    modifier = Modifier.alpha(alpha.value)
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
@@ -103,7 +103,7 @@ fun SplashScreen(
                     fontFamily = FontFamily.Monospace,
                     letterSpacing = 2.sp,
                     color = secondary(),
-                    alpha = alpha.value
+                    modifier = Modifier.alpha(alpha.value)
                 )
             }
         }

@@ -65,6 +65,8 @@ jobs:
 
       # Setup Android environment
       - uses: android-actions/setup-android@v4
+        with:
+          accept-android-sdk-licenses: false
 
       - name: Install Android SDK packages
         run: |
@@ -79,7 +81,7 @@ jobs:
             echo "::error::sdkmanager not found"
             exit 1
           fi
-          yes | "$CMD" --licenses
+          yes | "$CMD" --licenses || true
           "$CMD" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
       - uses: gradle/actions/setup-gradle@v4
@@ -100,6 +102,8 @@ jobs:
           java-version: "17"
 
       - uses: android-actions/setup-android@v4
+        with:
+          accept-android-sdk-licenses: false
 
       - name: Install Android SDK packages
         run: |
@@ -114,7 +118,7 @@ jobs:
             echo "::error::sdkmanager not found"
             exit 1
           fi
-          yes | "$CMD" --licenses
+          yes | "$CMD" --licenses || true
           "$CMD" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
       - uses: gradle/actions/setup-gradle@v4

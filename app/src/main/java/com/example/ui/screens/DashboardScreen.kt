@@ -37,7 +37,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.layout.FirstBaseline
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -336,7 +335,7 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
                     }
                     Spacer(modifier = Modifier.height(6.dp))
                     val (dlValue, dlUnit) = SpeedFormatter.split(dlSpeed)
-                    Row(verticalAlignment = Alignment.FirstBaseline) {
+                    Row(verticalAlignment = Alignment.Bottom) {
                         Text(
                             text = dlValue,
                             fontSize = 40.sp,
@@ -394,7 +393,7 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
                     }
                     Spacer(modifier = Modifier.height(6.dp))
                     val (ulValue, ulUnit) = SpeedFormatter.split(ulSpeed)
-                    Row(verticalAlignment = Alignment.FirstBaseline) {
+                    Row(verticalAlignment = Alignment.Bottom) {
                         Text(
                             text = ulValue,
                             fontSize = 27.sp,
@@ -479,7 +478,8 @@ fun SpeedSparkline(
         }
 
         val dlPath = toPath(dl)
-        val fillPath = Path(dlPath).apply {
+        val fillPath = Path().apply {
+            addPath(dlPath)
             lineTo(size.width, size.height)
             lineTo(0f, size.height)
             close()
