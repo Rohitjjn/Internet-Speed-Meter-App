@@ -227,7 +227,8 @@ fun DashboardScreen(
 fun HeroSpeedCard(modifier: Modifier = Modifier) {
     val live by SpeedMeterService.liveSpeedFlow.collectAsState()
     val isRunning by SpeedMeterService.isServiceRunning.collectAsState()
-    val preferencesManager = remember { PreferencesManager(LocalContext.current) }
+    val context = LocalContext.current
+    val preferencesManager = remember(context) { PreferencesManager(context) }
     val speedUnit by preferencesManager.speedUnitFlow.collectAsState(initial = SpeedUnit.BYTES)
 
     val isDark = isDarkModeActive()
