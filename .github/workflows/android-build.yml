@@ -1,0 +1,163 @@
+name: Android Build & Release
+
+# Manual workflow: fill/select the inputs in the Actions UI, click
+# "Run workflow" — it builds the APK and (optionally) uploads it to a
+# GitHub release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "Build type"
+        type: choice
+        options:
+          - release
+          - debug
+        default: release
+      version_name:
+        description: "Version name (e.g. 1.1.0)"
+        type: string
+        required: true
+        default: "1.0.0"
+      version_code:
+        description: "Version code (integer, e.g. 2)"
+        type: string
+        required: true
+        default: "1"
+      tag:
+        description: "Release tag (blank = v<version_name>)"
+        type: string
+        required: false
+        default: ""
+      release_title:
+        description: "Release title (blank = v<version_name>)"
+        type: string
+        required: false
+        default: ""
+      release_notes:
+        description: "Release notes (Markdown)"
+        type: string
+        required: false
+        default: "Built with GitHub Actions."
+      create_release:
+        description: "Create GitHub release & upload APK"
+        type: choice
+        options:
+          - "yes"
+          - "no"
+        default: "yes"
+
+permissions:
+  contents: write
+
+jobs:
+  # ---------------- Unit tests ----------------
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Installs platform-tools + accepts SDK licenses; AGP auto-downloads
+      # the compileSdk platform it needs.
+      - uses: android-actions/setup-android@v4
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Run unit tests
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
+
+  # ---------------- Build + release ----------------
+  build:
+    name: Build APK (${{ inputs.build_type }})
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v4
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Release builds are always signed: either with the repo's upload key
+      # (KEYSTORE_BASE64 secret, base64 of a .jks) or a throwaway key when
+      # the secret is missing (so the workflow never dead-ends).
+      - name: Prepare release keystore
+        if: inputs.build_type == 'release'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEY_ALIAS_INPUT: ${{ secrets.KEY_ALIAS }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > my-upload-key.jks
+            echo "Using the uploaded keystore."
+          else
+            echo "::warning::No KEYSTORE_BASE64 secret found - generating a throwaway self-signed keystore for this build."
+            keytool -genkeypair -storetype JKS -keystore my-upload-key.jks \
+              -storepass android -keypass android \
+              -alias "${KEY_ALIAS_INPUT:-upload}" \
+              -keyalg RSA -keysize 2048 -validity 10950 \
+              -dname "CN=SpeedMeter CI, OU=Mobile, O=SpeedMeter, L=Jaipur, ST=Rajasthan, C=IN"
+          fi
+
+      - name: Build APK
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'android' }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'upload' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'android' }}
+        run: |
+          if [ "${{ inputs.build_type }}" = "release" ]; then
+            ./gradlew :app:assembleRelease --stacktrace \
+              -PversionName="${{ inputs.version_name }}" \
+              -PversionCode="${{ inputs.version_code }}"
+          else
+            ./gradlew :app:assembleDebug --stacktrace \
+              -PversionName="${{ inputs.version_name }}" \
+              -PversionCode="${{ inputs.version_code }}"
+          fi
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist
+          if [ "${{ inputs.build_type }}" = "release" ]; then
+            cp app/build/outputs/apk/release/app-release.apk "dist/speed-meter-v${{ inputs.version_name }}-release.apk"
+            if [ -f app/build/outputs/mapping/release/mapping.txt ]; then
+              (cd app/build/outputs/mapping/release && zip -q mapping.zip mapping.txt)
+              cp mapping.zip dist/
+            fi
+          else
+            cp app/build/outputs/apk/debug/app-debug.apk "dist/speed-meter-v${{ inputs.version_name }}-debug.apk"
+          fi
+          ls -la dist
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: speed-meter-${{ inputs.build_type }}-v${{ inputs.version_name }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Create or update GitHub Release
+        if: inputs.create_release == 'yes'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag != '' && inputs.tag || format('v{0}', inputs.version_name) }}
+          name: ${{ inputs.release_title != '' && inputs.release_title || format('v{0}', inputs.version_name) }}
+          body: ${{ inputs.release_notes }}
+          files: |
+            dist/*.apk
+          fail_on_unmatched_files: true
+          # Re-running with the same tag replaces the APK asset in place.
+          overwrite: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

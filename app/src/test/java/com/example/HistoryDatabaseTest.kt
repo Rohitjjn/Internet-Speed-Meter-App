@@ -12,6 +12,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -44,49 +45,59 @@ class HistoryDatabaseTest {
     fun testInsertAndRetrieveByDate() = runTest {
         val entry = DataUsageEntity(
             date = "2026-05-27",
-            mobileDataUsed = 100 * 1024L * 1024L,
-            wifiDataUsed = 500 * 1024L * 1024L,
-            addOnDataUsed = 0L
+            mobileRx = 100L * 1024 * 1024,
+            mobileTx = 10L * 1024 * 1024,
+            wifiRx = 500L * 1024 * 1024,
+            wifiTx = 60L * 1024 * 1024
         )
-        dataUsageDao.insertData(entry)
+        dataUsageDao.upsertData(entry)
 
         val result = dataUsageDao.getDataByDate("2026-05-27").first()
         assertNotNull(result)
         assertEquals(entry.date, result?.date)
-        assertEquals(entry.mobileDataUsed, result?.mobileDataUsed)
-        assertEquals(entry.wifiDataUsed, result?.wifiDataUsed)
+        assertEquals(entry.mobileRx, result?.mobileRx)
+        assertEquals(entry.mobileTx, result?.mobileTx)
+        assertEquals(entry.wifiRx, result?.wifiRx)
+        assertEquals(entry.wifiTx, result?.wifiTx)
     }
 
     @Test
-    fun testGetMonthlyTotal() = runTest {
-        val entry1 = DataUsageEntity(
-            date = "2026-05-01",
-            mobileDataUsed = 100 * 1024L * 1024L,
-            wifiDataUsed = 200 * 1024L * 1024L,
-            addOnDataUsed = 50 * 1024L * 1024L
-        )
-        val entry2 = DataUsageEntity(
-            date = "2026-05-15",
-            mobileDataUsed = 150 * 1024L * 1024L,
-            wifiDataUsed = 300 * 1024L * 1024L,
-            addOnDataUsed = 0L
-        )
-        // This is a different month, should not be summed
-        val entry3 = DataUsageEntity(
-            date = "2026-06-01",
-            mobileDataUsed = 500 * 1024L * 1024L,
-            wifiDataUsed = 500 * 1024L * 1024L,
-            addOnDataUsed = 500 * 1024L * 1024L
-        )
+    fun testUpsertReplacesSameDate() = runTest {
+        dataUsageDao.upsertData(DataUsageEntity("2026-05-27", 1, 1, 1, 1))
+        dataUsageDao.upsertData(DataUsageEntity("2026-05-27", 10, 20, 30, 40))
 
-        dataUsageDao.insertData(entry1)
-        dataUsageDao.insertData(entry2)
-        dataUsageDao.insertData(entry3)
+        val result = dataUsageDao.getByDate("2026-05-27")
+        assertEquals(10L, result?.mobileRx)
+        assertEquals(20L, result?.mobileTx)
+        assertEquals(30L, result?.wifiRx)
+        assertEquals(40L, result?.wifiTx)
+    }
 
-        // Sum of entry1 & entry2: (100+200+50) + (150+300) = 350 + 450 = 800 MB
-        val expectedBytes = 800 * 1024L * 1024L
-        val monthTotal = dataUsageDao.getThisMonthTotal("2026-05-%").first()
+    @Test
+    fun testMissingDateReturnsNull() = runTest {
+        assertNull(dataUsageDao.getByDate("2000-01-01"))
+    }
 
-        assertEquals(expectedBytes, monthTotal)
+    @Test
+    fun testMonthlyTotalSumsAllTransports() = runTest {
+        dataUsageDao.upsertData(DataUsageEntity("2026-06-01", 100, 10, 200, 20))
+        dataUsageDao.upsertData(DataUsageEntity("2026-06-02", 50, 5, 100, 10))
+        dataUsageDao.upsertData(DataUsageEntity("2026-07-01", 999, 999, 999, 999)) // other month
+
+        val total = dataUsageDao.getThisMonthTotal("2026-06-%").first()
+        assertEquals(495L, total)
+    }
+
+    @Test
+    fun testDeleteAndClear() = runTest {
+        dataUsageDao.upsertData(DataUsageEntity("2026-06-01", 1, 1, 1, 1))
+        dataUsageDao.upsertData(DataUsageEntity("2026-06-02", 1, 1, 1, 1))
+
+        dataUsageDao.deleteByDate("2026-06-01")
+        assertNull(dataUsageDao.getByDate("2026-06-01"))
+        assertNotNull(dataUsageDao.getByDate("2026-06-02"))
+
+        dataUsageDao.clearAll()
+        assertNull(dataUsageDao.getByDate("2026-06-02"))
     }
 }

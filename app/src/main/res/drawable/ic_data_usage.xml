@@ -1,0 +1,16 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- rounded frame -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.8"
+        android:pathData="M6,4.5h12A1.5,1.5 0 0 1 19.5,6v12a1.5,1.5 0 0 1 -1.5,1.5H6A1.5,1.5 0 0 1 4.5,18V6A1.5,1.5 0 0 1 6,4.5z" />
+    <!-- data bars -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M7.4,15.5h2.3v-4.6H7.4v4.6zM10.9,15.5h2.3V7.5h-2.3v8zM14.4,15.5h2.3v-2.6h-2.3v2.6z" />
+</vector>

@@ -1,21 +1,19 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
+# ProGuard / R8 rules for Internet Speed Meter (release build).
 #
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Compose, Room, DataStore, Coroutines and WorkManager all ship their own
+# consumer rules, so only the app's reflection-sensitive pieces need attention.
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Room entities + DAOs (KSP generates impls; keep the public surface).
+-keep class com.example.data.** { *; }
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# The speed counter reader is referenced only from the service (kept), but the
+# /proc/net/dev path strings must survive.
+-keep class com.example.services.TrafficCounterReader { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# WorkManager workers are discovered by class name.
+-keep class com.example.services.SpeedKeepAliveWorker { *; }
+
+# Keep the data usage entity field names in case of any reflection.
+-keepclassmembers class com.example.data.DataUsageEntity {
+    <fields>;
+}

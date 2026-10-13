@@ -1,70 +1,88 @@
 package com.example.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
-private val DarkColorScheme = darkColorScheme(
+private val DarkColors = darkColorScheme(
     primary = DarkPrimary,
     onPrimary = DarkOnPrimary,
-    primaryContainer = DarkSurface,
-    onPrimaryContainer = DarkOnSurface,
-    secondary = DarkPrimary,
-    onSecondary = DarkOnPrimary,
+    primaryContainer = DarkCardSolid,
+    onPrimaryContainer = DarkTextPrimary,
+    secondary = SpeedUpDark,
+    onSecondary = Color.Black,
     background = DarkBackground,
-    onBackground = DarkOnBackground,
-    surface = DarkSurface,
-    onSurface = DarkOnSurface,
-    surfaceVariant = DarkSurface,
-    onSurfaceVariant = DarkOnBackground,
+    onBackground = DarkTextPrimary,
+    surface = DarkCardSolid,
+    onSurface = DarkTextPrimary,
+    surfaceVariant = DarkCardSolid,
+    onSurfaceVariant = DarkTextSecondary,
     outline = DarkBorder,
-    error = Color(0xFFFF453A)
+    error = AccentDangerDark,
 )
 
-private val LightColorScheme = lightColorScheme(
+private val LightColors = lightColorScheme(
     primary = LightPrimary,
     onPrimary = LightOnPrimary,
-    primaryContainer = LightSurface,
-    onPrimaryContainer = LightOnSurface,
-    secondary = LightPrimary,
-    onSecondary = LightOnPrimary,
+    primaryContainer = LightCardSolid,
+    onPrimaryContainer = LightTextPrimary,
+    secondary = SpeedUp,
+    onSecondary = Color.White,
     background = LightBackground,
-    onBackground = LightOnBackground,
-    surface = LightSurface,
-    onSurface = LightOnSurface,
-    surfaceVariant = LightSurface,
-    onSurfaceVariant = LightOnBackground,
+    onBackground = LightTextPrimary,
+    surface = LightCardSolid,
+    onSurface = LightTextPrimary,
+    surfaceVariant = LightCardSolid,
+    onSurfaceVariant = LightTextSecondary,
     outline = LightBorder,
-    error = Color(0xFFFF3B30)
+    error = AccentDanger,
 )
 
-/**
- * Accessor for glassy colors that fits either Light or Dark styles depending on the active scheme.
- */
-val MaterialTheme.glassColor: Color
-    @Composable
-    get() = if (colorScheme.background == DarkBackground) DarkGlass else LightGlass
+/** Frosted glass fill for cards in the active mode. */
+val LocalGlassColor = staticCompositionLocalOf { LightCard }
+val LocalGlassBorder = staticCompositionLocalOf { LightBorder }
+val LocalGlassHighlight = staticCompositionLocalOf { LightHighlight }
 
-val MaterialTheme.borderColor: Color
-    @Composable
-    get() = if (colorScheme.background == DarkBackground) DarkBorder else LightBorder
+/** Whether the ACTIVE theme is dark (respects the user override, not just the system). */
+val LocalDarkTheme = staticCompositionLocalOf { false }
+
+@Composable
+fun isDarkModeActive(): Boolean = LocalDarkTheme.current
+
+@Composable
+val glassColor: Color
+    @Composable get() = LocalGlassColor.current
+
+@Composable
+val glassBorder: Color
+    @Composable get() = LocalGlassBorder.current
+
+@Composable
+val glassHighlight: Color
+    @Composable get() = LocalGlassHighlight.current
 
 @Composable
 fun MyApplicationTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean,
     content: @Composable () -> Unit,
 ) {
-    // DynamicLight/DarkColorScheme yields generic colored styles. 
-    // To preserve our strictly customized, high-end pure minimal palette, 
-    // we bypass dynamic colors and strictly use our premium Light / Dark schemes.
-    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
-
+    val isDark = darkTheme
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = if (isDark) DarkColors else LightColors,
         typography = Typography,
-        content = content
+        content = {
+            CompositionLocalProvider(
+                LocalGlassColor provides (if (isDark) DarkCard else LightCard),
+                LocalGlassBorder provides (if (isDark) DarkBorder else LightBorder),
+                LocalGlassHighlight provides (if (isDark) DarkHighlight else LightHighlight),
+                LocalDarkTheme provides isDark,
+            ) {
+                content()
+            }
+        }
     )
 }

@@ -8,6 +8,26 @@ import android.os.Build
 import android.os.Process
 import java.util.Calendar
 
+/** Bytes transferred on one transport since a reference time. */
+data class TransportBytes(
+    val rx: Long = 0L,
+    val tx: Long = 0L
+) {
+    val total: Long get() = rx + tx
+
+    operator fun plus(other: TransportBytes) = TransportBytes(rx + other.rx, tx + other.tx)
+
+    /** Clamps to zero so a stale "reset" baseline can never push usage negative. */
+    operator fun minus(other: TransportBytes) =
+        TransportBytes((rx - other.rx).coerceAtLeast(0L), (tx - other.tx).coerceAtLeast(0L))
+
+    val isZero: Boolean get() = rx == 0L && tx == 0L
+}
+
+/**
+ * Reads REAL system-wide per-transport counters via NetworkStatsManager.
+ * Requires the special "Usage access" permission (PACKAGE_USAGE_STATS).
+ */
 class NetworkStatsHelper(private val context: Context) {
 
     fun isPermissionGranted(): Boolean {
@@ -24,84 +44,36 @@ class NetworkStatsHelper(private val context: Context) {
         }
     }
 
-    /**
-     * Fetch Mobile (cellular) bytes transferred since midnight.
-     */
-    fun getMobileBytesSinceMidnight(): Long {
-        if (!isPermissionGranted()) return 0L
+    /** Mobile (cellular) bytes since midnight. */
+    fun getMobileSinceMidnight(): TransportBytes = getBytesSinceMidnight(NetworkCapabilities.TRANSPORT_CELLULAR)
+
+    /** Wi-Fi bytes since midnight. */
+    fun getWifiSinceMidnight(): TransportBytes = getBytesSinceMidnight(NetworkCapabilities.TRANSPORT_WIFI)
+
+    /** Ethernet bytes since midnight. */
+    fun getEthernetSinceMidnight(): TransportBytes = getBytesSinceMidnight(NetworkCapabilities.TRANSPORT_ETHERNET)
+
+    /** Wi-Fi + Ethernet combined (what users think of as "home network"). */
+    fun getWifiOrEthernetSinceMidnight(): TransportBytes =
+        getWifiSinceMidnight() + getEthernetSinceMidnight()
+
+    private fun getBytesSinceMidnight(transport: Int): TransportBytes {
+        if (!isPermissionGranted()) return TransportBytes()
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val networkStatsManager = context.getSystemService(Context.NETWORK_STATS_SERVICE) as? NetworkStatsManager ?: return 0L
-                val startTime = getMidnightTimeInMillis()
-                val endTime = System.currentTimeMillis()
-
-                val bucket = networkStatsManager.querySummaryForDevice(
-                    NetworkCapabilities.TRANSPORT_CELLULAR,
-                    null,
-                    startTime,
-                    endTime
-                )
-                bucket.rxBytes + bucket.txBytes
+                val statsManager =
+                    context.getSystemService(Context.NETWORK_STATS_SERVICE) as? NetworkStatsManager
+                        ?: return TransportBytes()
+                val start = getMidnightTimeInMillis()
+                val end = System.currentTimeMillis()
+                val bucket = statsManager.querySummaryForDevice(transport, null, start, end)
+                TransportBytes(bucket.rxBytes, bucket.txBytes)
             } else {
-                0L
+                TransportBytes()
             }
         } catch (e: Exception) {
             e.printStackTrace()
-            0L
-        }
-    }
-
-    /**
-     * Fetch WiFi bytes transferred since midnight.
-     */
-    fun getWifiBytesSinceMidnight(): Long {
-        if (!isPermissionGranted()) return 0L
-        return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val networkStatsManager = context.getSystemService(Context.NETWORK_STATS_SERVICE) as? NetworkStatsManager ?: return 0L
-                val startTime = getMidnightTimeInMillis()
-                val endTime = System.currentTimeMillis()
-
-                val bucket = networkStatsManager.querySummaryForDevice(
-                    NetworkCapabilities.TRANSPORT_WIFI,
-                    null,
-                    startTime,
-                    endTime
-                )
-                bucket.rxBytes + bucket.txBytes
-            } else {
-                0L
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            0L
-        }
-    }
-
-    /**
-     * Fetch Ethernet bytes transferred since midnight.
-     */
-    fun getEthernetBytesSinceMidnight(): Long {
-        if (!isPermissionGranted()) return 0L
-        return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val networkStatsManager = context.getSystemService(Context.NETWORK_STATS_SERVICE) as? NetworkStatsManager ?: return 0L
-                val startTime = getMidnightTimeInMillis()
-                val endTime = System.currentTimeMillis()
-
-                val bucket = networkStatsManager.querySummaryForDevice(
-                    NetworkCapabilities.TRANSPORT_ETHERNET,
-                    null,
-                    startTime,
-                    endTime
-                )
-                bucket.rxBytes + bucket.txBytes
-            } else {
-                0L
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            0L
+            TransportBytes()
         }
     }
 
