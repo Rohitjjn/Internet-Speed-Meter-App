@@ -72,6 +72,10 @@ import com.example.ui.components.GlassCard
 import com.example.ui.theme.AccentWarning
 import com.example.ui.theme.LiveGreen
 import com.example.ui.theme.LiveGreenDark
+import com.example.ui.theme.SpeedDown
+import com.example.ui.theme.SpeedDownDark
+import com.example.ui.theme.SpeedUp
+import com.example.ui.theme.SpeedUpDark
 import com.example.ui.theme.glassBorder
 import com.example.ui.theme.glassColor
 import com.example.ui.theme.isDarkModeActive
