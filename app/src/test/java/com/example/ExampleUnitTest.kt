@@ -29,7 +29,7 @@ class ExampleUnitTest {
         // 12.4 MB in bytes
         val (mbValue, mbUnit) = SpeedFormatter.split(12_999_342L)
         assertEquals("MB/s", mbUnit)
-        assertEquals(1, mbValue.contains('.')) // 12.4 has one decimal
+        org.junit.Assert.assertTrue(mbValue.contains('.')) // 12.4 has one decimal
     }
 
     // ---------- BytesFormatter ----------

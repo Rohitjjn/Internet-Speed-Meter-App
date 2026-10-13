@@ -85,6 +85,9 @@ fun GlassCard(
     shadowElevation: Dp = 10.dp,
     content: @Composable BoxScope.() -> Unit
 ) {
+    val bgColor = glassColor
+    val borderColor = glassBorder
+    val highlightColor = glassHighlight
     Box(
         modifier = modifier
             .shadow(
@@ -94,14 +97,14 @@ fun GlassCard(
                 spotColor = Color.Black.copy(alpha = 0.09f)
             )
             .clip(shape)
-            .background(glassColor)
-            .border(1.dp, glassBorder, shape)
+            .background(bgColor)
+            .border(1.dp, borderColor, shape)
             .drawWithContent {
                 drawContent()
                 // Subtle lighter strip along the top edge — the "glass catches light" cue.
                 drawRect(
                     brush = Brush.verticalGradient(
-                        colors = listOf(glassHighlight, glassHighlight.copy(alpha = 0f)),
+                        colors = listOf(highlightColor, highlightColor.copy(alpha = 0f)),
                         startY = 0f,
                         endY = 26.dp.toPx()
                     ),
@@ -118,11 +121,13 @@ fun GlassChip(
     modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit
 ) {
+    val bgColor = glassColor
+    val borderColor = glassBorder
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(100.dp))
-            .background(glassColor)
-            .border(1.dp, glassBorder, RoundedCornerShape(100.dp)),
+            .background(bgColor)
+            .border(1.dp, borderColor, RoundedCornerShape(100.dp)),
         content = content
     )
 }
