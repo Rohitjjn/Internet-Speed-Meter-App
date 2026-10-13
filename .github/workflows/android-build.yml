@@ -63,9 +63,24 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # Installs platform-tools + accepts SDK licenses; AGP auto-downloads
-      # the compileSdk platform it needs.
+      # Setup Android environment
       - uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK packages
+        run: |
+          CMD="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$CMD" ]; then
+            CMD="$ANDROID_SDK_ROOT/tools/bin/sdkmanager"
+          fi
+          if [ ! -x "$CMD" ]; then
+            CMD="$(command -v sdkmanager || true)"
+          fi
+          if [ -z "$CMD" ]; then
+            echo "::error::sdkmanager not found"
+            exit 1
+          fi
+          yes | "$CMD" --licenses
+          "$CMD" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
       - uses: gradle/actions/setup-gradle@v4
 
@@ -85,6 +100,22 @@ jobs:
           java-version: "17"
 
       - uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK packages
+        run: |
+          CMD="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$CMD" ]; then
+            CMD="$ANDROID_SDK_ROOT/tools/bin/sdkmanager"
+          fi
+          if [ ! -x "$CMD" ]; then
+            CMD="$(command -v sdkmanager || true)"
+          fi
+          if [ -z "$CMD" ]; then
+            echo "::error::sdkmanager not found"
+            exit 1
+          fi
+          yes | "$CMD" --licenses
+          "$CMD" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
       - uses: gradle/actions/setup-gradle@v4
 
