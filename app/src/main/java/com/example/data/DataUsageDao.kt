@@ -10,23 +10,24 @@ import kotlinx.coroutines.flow.Flow
 interface DataUsageDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertData(data: DataUsageEntity)
-
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertDataIgnore(data: DataUsageEntity)
+    suspend fun upsertData(data: DataUsageEntity)
 
     @Query("SELECT * FROM daily_data_usage WHERE date = :date LIMIT 1")
     fun getDataByDate(date: String): Flow<DataUsageEntity?>
 
+    /** One-shot read (used by the service to detect external resets). */
+    @Query("SELECT * FROM daily_data_usage WHERE date = :date LIMIT 1")
+    suspend fun getByDate(date: String): DataUsageEntity?
+
     @Query("SELECT * FROM daily_data_usage ORDER BY date DESC")
     fun getAllHistory(): Flow<List<DataUsageEntity>>
 
-    @Query("SELECT SUM(mobileDataUsed + wifiDataUsed + addOnDataUsed) FROM daily_data_usage WHERE date LIKE :monthPrefix")
-    fun getThisMonthTotal(monthPrefix: String): Flow<Long?>
+    @Query("SELECT COALESCE(SUM(mobileRx + mobileTx + wifiRx + wifiTx), 0) FROM daily_data_usage WHERE date LIKE :monthPrefix")
+    fun getThisMonthTotal(monthPrefix: String): Flow<Long>
 
     @Query("DELETE FROM daily_data_usage WHERE date = :date")
-    suspend fun deleteTodayData(date: String)
+    suspend fun deleteByDate(date: String)
 
     @Query("DELETE FROM daily_data_usage")
-    suspend fun clearAllHistory()
+    suspend fun clearAll()
 }

@@ -1,9 +1,7 @@
 package com.example.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -20,22 +18,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.DataUsage
-import androidx.compose.material.icons.filled.PauseCircle
-import androidx.compose.material.icons.filled.Restore
-import androidx.compose.material.icons.filled.SignalCellularAlt
-import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -44,928 +30,685 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.FirstBaseline
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.R
 import com.example.services.SpeedMeterService
-import com.example.ui.theme.borderColor
+import com.example.ui.components.AppBackground
+import com.example.ui.components.AppIcon
+import com.example.ui.components.GlassCard
+import com.example.ui.components.GlassChip
+import com.example.ui.theme.AccentDanger
+import com.example.ui.theme.AccentWarning
+import com.example.ui.theme.LiveGreen
+import com.example.ui.theme.LiveGreenDark
+import com.example.ui.theme.SpeedDown
+import com.example.ui.theme.SpeedDownDark
+import com.example.ui.theme.SpeedUp
+import com.example.ui.theme.SpeedUpDark
+import com.example.ui.theme.glassBorder
 import com.example.ui.theme.glassColor
+import com.example.ui.theme.isDarkModeActive
+import com.example.ui.util.dlColor
+import com.example.ui.util.ulColor
+import com.example.ui.util.secondary
+import com.example.ui.util.toBytes
 import com.example.ui.viewmodel.DashboardViewModel
+import com.example.ui.viewmodel.DataUsage
+import com.example.util.BytesFormatter
+import com.example.util.DateFormatter
+import com.example.util.SpeedFormatter
+
+@Composable
+private fun SpeedDownC(): Color = dlColor()
+
+@Composable
+private fun SpeedUpC(): Color = ulColor()
 
 @Composable
 fun DashboardScreen(
     viewModel: DashboardViewModel = viewModel()
 ) {
-    val isAddOnActive by viewModel.isAddOnActive.collectAsState()
-    val mobileUsage by viewModel.mobileDataState.collectAsState()
-    val wifiUsage by viewModel.wifiDataState.collectAsState()
-    val addOnUsage by viewModel.addOnUsage.collectAsState()
+    val mobileUsage by viewModel.mobileData.collectAsState()
+    val wifiUsage by viewModel.wifiData.collectAsState()
     val totalUsage by viewModel.totalUsage.collectAsState()
-    val showDialog by viewModel.showConfirmationDialog.collectAsState()
-    val showResetDialog by viewModel.showResetConfirmationDialog.collectAsState()
-
-    // Smooth scrollable dynamic surface container
-    val scrollState = rememberScrollState()
+    val limitProgress by viewModel.limitProgress.collectAsState()
+    val limitLabel by viewModel.mobileLimitLabel.collectAsState()
+    val showResetDialog by viewModel.showResetDialog.collectAsState()
+    val permissionGranted by viewModel.permissionGranted.collectAsState()
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
             .testTag("dashboard_screen_root")
     ) {
+        AppBackground()
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(scrollState)
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Elegant Premium Header Info Row
+            // ---------------- Header ----------------
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 6.dp),
+                    .padding(bottom = 2.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Bottom
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
                     Text(
-                        text = "Overview",
+                        text = "Speed",
                         fontSize = 28.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.primary
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = DateFormatter.shortDay(),
+                        fontSize = 12.sp,
+                        color = secondary()
                     )
                 }
-                
-                // Reset Button & Active Pulse Dot Indicator
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                IconButton(
+                    onClick = { viewModel.requestResetTodayUsage() },
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(glassColor)
+                        .border(1.dp, glassBorder, RoundedCornerShape(10.dp))
+                        .size(38.dp)
+                        .testTag("dashboard_reset_today")
                 ) {
-                    IconButton(
-                        onClick = { viewModel.requestResetTodayUsage() },
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(MaterialTheme.glassColor)
-                            .size(32.dp)
-                            .testTag("dashboard_reset_today")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Restore,
-                            contentDescription = "Reset Today",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(100.dp))
-                            .background(MaterialTheme.glassColor)
-                            .padding(horizontal = 10.dp, vertical = 5.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(RoundedCornerShape(100.dp))
-                                .background(if (isAddOnActive) Color(0xFFFF3B30) else Color(0xFF34C759))
-                        )
-                        Text(
-                            text = if (isAddOnActive) "ADD-ON LIVE" else "MONITORING",
-                            fontSize = 9.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
-                        )
-                    }
+                    AppIcon(
+                        resId = R.drawable.ic_restore,
+                        contentDescription = "Reset Today",
+                        tint = AccentDanger,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
             }
 
-            // Live Speed Indicator
-            LiveSpeedIndicatorCard()
+            // ---------------- Hero: live speed ----------------
+            HeroSpeedCard()
 
-            // Card 1: Mobile Data
-            PremiumDataCard(
-                title = "Mobile Data",
-                icon = Icons.Default.SignalCellularAlt,
-                usageMb = mobileUsage.total,
-                downloadMb = mobileUsage.download,
-                uploadMb = mobileUsage.upload,
-                isPaused = isAddOnActive,
-                cardTag = "mobile_data_card"
+            // ---------------- Permission hint ----------------
+            if (!permissionGranted) {
+                UsageAccessHintCard()
+            }
+
+            // ---------------- Mobile / WiFi cards ----------------
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                UsageCard(
+                    title = "Mobile Data",
+                    iconRes = R.drawable.ic_cellular,
+                    data = mobileUsage,
+                    modifier = Modifier.weight(1f).testTag("mobile_data_card")
+                )
+                UsageCard(
+                    title = "Wi-Fi",
+                    iconRes = R.drawable.ic_wifi,
+                    data = wifiUsage,
+                    modifier = Modifier.weight(1f).testTag("wifi_data_card")
+                )
+            }
+
+            // ---------------- Total card ----------------
+            TotalCard(
+                data = totalUsage,
+                limitProgress = limitProgress,
+                limitLabel = limitLabel,
+                modifier = Modifier.testTag("total_data_card")
             )
 
-            // Card 2: WiFi Data
-            PremiumDataCard(
-                title = "WiFi Connection",
-                icon = Icons.Default.Wifi,
-                usageMb = wifiUsage.total,
-                downloadMb = wifiUsage.download,
-                uploadMb = wifiUsage.upload,
-                isPaused = false,
-                cardTag = "wifi_data_card"
-            )
-
-            // Card 3: Data Add-On Engine (CRITICAL LOGIC)
-            PremiumAddOnEngineCard(
-                isAddOnActive = isAddOnActive,
-                usageMb = addOnUsage.total,
-                downloadMb = addOnUsage.download,
-                uploadMb = addOnUsage.upload,
-                onStartClick = { viewModel.requestStartTracking() },
-                onStopClick = { viewModel.stopTracking() }
-            )
-
-            // Card 4: Total Usage Metric Box
-            PremiumTotalCard(
-                usageMb = totalUsage.total,
-                downloadMb = totalUsage.download,
-                uploadMb = totalUsage.upload
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
         }
 
-        // Beautiful, highly polished minimalist dialog confirmation popup
-        if (showDialog) {
-            AlertDialog(
-                onDismissRequest = { viewModel.dismissDialog() },
-                confirmButton = {
-                    TextButton(
-                        onClick = { viewModel.confirmStartTracking() },
-                        modifier = Modifier.testTag("dialog_confirm_button")
-                    ) {
-                        Text(
-                            text = "START TRACKING",
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-                },
-                dismissButton = {
-                    TextButton(
-                        onClick = { viewModel.dismissDialog() },
-                        modifier = Modifier.testTag("dialog_dismiss_button")
-                    ) {
-                        Text(
-                            text = "CANCEL",
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-                },
-                title = {
-                    Text(
-                        text = "ADD-ON DISPATCH",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 1.sp
-                    )
-                },
-                text = {
-                    Text(
-                        text = "Start tracking Add-On Data? This pauses your standard Mobile Data calculations to protect standard cycle records.",
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
-                    )
-                },
-                shape = RoundedCornerShape(20.dp),
-                containerColor = MaterialTheme.colorScheme.surface,
-                modifier = Modifier
-                    .border(1.dp, MaterialTheme.borderColor, RoundedCornerShape(20.dp))
-                    .testTag("add_on_alert_dialog")
-            )
-        }
-
+        // ---------------- Reset confirmation dialog ----------------
         if (showResetDialog) {
             AlertDialog(
                 onDismissRequest = { viewModel.dismissResetDialog() },
                 confirmButton = {
-                    TextButton(
-                        onClick = { viewModel.confirmResetTodayUsage() },
-                        modifier = Modifier.testTag("dialog_confirm_reset_button")
-                    ) {
-                        Text(
-                            text = "RESET ALL",
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.error,
-                            fontFamily = FontFamily.Monospace
-                        )
+                    TextButton(onClick = { viewModel.confirmResetTodayUsage() }) {
+                        Text("RESET", fontWeight = FontWeight.Bold, color = AccentDanger)
                     }
                 },
                 dismissButton = {
-                    TextButton(
-                        onClick = { viewModel.dismissResetDialog() },
-                        modifier = Modifier.testTag("dialog_dismiss_reset_button")
-                    ) {
-                        Text(
-                            text = "CANCEL",
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                            fontFamily = FontFamily.Monospace
-                        )
+                    TextButton(onClick = { viewModel.dismissResetDialog() }) {
+                        Text("CANCEL", color = secondary())
                     }
                 },
-                title = {
-                    Text(
-                        text = "RESET DATA USAGE",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 1.sp
-                    )
-                },
+                title = { Text("Reset Today's Usage", fontWeight = FontWeight.Bold) },
                 text = {
                     Text(
-                        text = "Are you sure you want to reset all data usage metrics for today? This action cannot be undone.",
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                        "Today's counters will be set back to zero. This cannot be undone.",
+                        color = secondary()
                     )
                 },
-                shape = RoundedCornerShape(20.dp),
-                containerColor = MaterialTheme.colorScheme.surface,
-                modifier = Modifier
-                    .border(1.dp, MaterialTheme.borderColor, RoundedCornerShape(20.dp))
-                    .testTag("reset_alert_dialog")
+                shape = RoundedCornerShape(24.dp),
+                containerColor = MaterialTheme.colorScheme.surface
             )
         }
     }
 }
 
-// FORMAT HELPER
-fun formatUsage(mbValue: Double): String {
-    return if (mbValue >= 1024.0) {
-        String.format("%.2f GB", mbValue / 1024.0)
-    } else {
-        String.format("%.1f MB", mbValue)
-    }
-}
+// ============================== HERO SPEED CARD ==============================
 
 @Composable
-fun PremiumDataCard(
-    title: String,
-    icon: ImageVector,
-    usageMb: Double,
-    downloadMb: Double,
-    uploadMb: Double,
-    isPaused: Boolean,
-    cardTag: String
-) {
-    val cardAlpha by animateFloatAsState(
-        targetValue = if (isPaused) 0.45f else 1.0f,
-        animationSpec = tween(durationMillis = 350),
-        label = "card_alpha"
-    )
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .alpha(cardAlpha)
-            .border(1.dp, MaterialTheme.borderColor, RoundedCornerShape(20.dp))
-            .testTag(cardTag),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer
-        ),
-        shape = RoundedCornerShape(20.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(20.dp)
-        ) {
-            // Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(MaterialTheme.glassColor),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = icon,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    Text(
-                        text = title,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                // If Paused, display dynamic mini badge
-                AnimatedVisibility(visible = isPaused) {
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(MaterialTheme.colorScheme.error.copy(alpha = 0.1f))
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PauseCircle,
-                            contentDescription = "Paused Icon",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Text(
-                            text = "PAUSED",
-                            fontSize = 9.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // Main Metric
-            Text(
-                text = "Today's Usage",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                fontFamily = FontFamily.Monospace,
-                letterSpacing = 0.5.sp
-            )
-            Text(
-                text = formatUsage(usageMb),
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(vertical = 4.dp).testTag("${cardTag}_usage_text")
-            )
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Bottom stats row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Download
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowDownward,
-                        contentDescription = "Download Arrow",
-                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Column {
-                        Text(
-                            text = "Download",
-                            fontSize = 9.sp,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
-                            fontFamily = FontFamily.Monospace
-                        )
-                        Text(
-                            text = formatUsage(downloadMb),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-                }
-
-                // Upload
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowUpward,
-                        contentDescription = "Upload Arrow",
-                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Column {
-                        Text(
-                            text = "Upload",
-                            fontSize = 9.sp,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
-                            fontFamily = FontFamily.Monospace
-                        )
-                        Text(
-                            text = formatUsage(uploadMb),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun PremiumAddOnEngineCard(
-    isAddOnActive: Boolean,
-    usageMb: Double,
-    downloadMb: Double,
-    uploadMb: Double,
-    onStartClick: () -> Unit,
-    onStopClick: () -> Unit
-) {
-    val animatedBorderColor by animateColorAsState(
-        targetValue = if (isAddOnActive) Color(0xFFFF3B30) else MaterialTheme.borderColor,
-        animationSpec = tween(durationMillis = 400),
-        label = "border_color"
-    )
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.2.dp, animatedBorderColor, RoundedCornerShape(20.dp))
-            .testTag("addon_data_card"),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer
-        ),
-        shape = RoundedCornerShape(20.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(20.dp)
-        ) {
-            // Header Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(
-                                if (isAddOnActive) Color(0xFFFF3B30).copy(alpha = 0.1f)
-                                else MaterialTheme.glassColor
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Bolt,
-                            contentDescription = null,
-                            tint = if (isAddOnActive) Color(0xFFFF3B30) else MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    Text(
-                        text = "Data Add-On",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                // Premium Action Trigger Switch
-                if (!isAddOnActive) {
-                    Button(
-                        onClick = onStartClick,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
-                        ),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .height(34.dp)
-                            .testTag("addon_start_button")
-                    ) {
-                        Text(
-                            text = "START",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            letterSpacing = 0.5.sp
-                        )
-                    }
-                } else {
-                    Button(
-                        onClick = onStopClick,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFFF3B30),
-                            contentColor = Color.White
-                        ),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .height(34.dp)
-                            .testTag("addon_stop_button")
-                    ) {
-                        Text(
-                            text = "STOP",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            letterSpacing = 0.5.sp
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // Main Metric
-            Text(
-                text = if (isAddOnActive) "Active Add-On Tracking" else "Add-On Inactive",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                color = if (isAddOnActive) Color(0xFFFF3B30).copy(alpha = 0.7f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                fontFamily = FontFamily.Monospace,
-                letterSpacing = 0.5.sp
-            )
-            Text(
-                text = if (isAddOnActive) formatUsage(usageMb) else "0 MB",
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                color = if (isAddOnActive) Color(0xFFFF3B30) else MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(vertical = 4.dp).testTag("addon_usage_text")
-            )
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Split stats under Card
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Download
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowDownward,
-                        contentDescription = "Download Arrow",
-                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Column {
-                        Text(
-                            text = "Download",
-                            fontSize = 9.sp,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
-                            fontFamily = FontFamily.Monospace
-                        )
-                        Text(
-                            text = if (isAddOnActive) formatUsage(downloadMb) else "--",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.testTag("addon_download_text")
-                        )
-                    }
-                }
-
-                // Upload
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowUpward,
-                        contentDescription = "Upload Arrow",
-                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Column {
-                        Text(
-                            text = "Upload",
-                            fontSize = 9.sp,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
-                            fontFamily = FontFamily.Monospace
-                        )
-                        Text(
-                            text = if (isAddOnActive) formatUsage(uploadMb) else "--",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.testTag("addon_upload_text")
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun PremiumTotalCard(
-    usageMb: Double,
-    downloadMb: Double,
-    uploadMb: Double
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, MaterialTheme.borderColor, RoundedCornerShape(20.dp))
-            .testTag("total_data_card"),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer
-        ),
-        shape = RoundedCornerShape(20.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(20.dp)
-        ) {
-            // Header Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(MaterialTheme.glassColor),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DataUsage,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    Text(
-                        text = "Total Usage",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // Main Metric
-            Text(
-                text = "Consolidated Sum",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                fontFamily = FontFamily.Monospace,
-                letterSpacing = 0.5.sp
-            )
-            Text(
-                text = formatUsage(usageMb),
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(vertical = 4.dp).testTag("total_usage_text")
-            )
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Stats Split Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Download
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowDownward,
-                        contentDescription = "Download Arrow",
-                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Column {
-                        Text(
-                            text = "Download",
-                            fontSize = 9.sp,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
-                            fontFamily = FontFamily.Monospace
-                        )
-                        Text(
-                            text = formatUsage(downloadMb),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.testTag("total_download_text")
-                        )
-                    }
-                }
-
-                // Upload
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowUpward,
-                        contentDescription = "Upload Arrow",
-                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Column {
-                        Text(
-                            text = "Upload",
-                            fontSize = 9.sp,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
-                            fontFamily = FontFamily.Monospace
-                        )
-                        Text(
-                            text = formatUsage(uploadMb),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.testTag("total_upload_text")
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun LiveSpeedIndicatorCard() {
+fun HeroSpeedCard(modifier: Modifier = Modifier) {
     val dlSpeed by SpeedMeterService.downloadSpeedFlow.collectAsState()
     val ulSpeed by SpeedMeterService.uploadSpeedFlow.collectAsState()
+    val network by SpeedMeterService.networkTypeFlow.collectAsState()
+    val peakDl by SpeedMeterService.peakDownloadFlow.collectAsState()
+    val dlHistory by SpeedMeterService.dlHistoryFlow.collectAsState()
+    val ulHistory by SpeedMeterService.ulHistoryFlow.collectAsState()
     val isRunning by SpeedMeterService.isServiceRunning.collectAsState()
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, MaterialTheme.borderColor, RoundedCornerShape(20.dp))
-            .testTag("live_speed_card"),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer
-        ),
-        shape = RoundedCornerShape(20.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
+    val isDark = isDarkModeActive()
+    val downColor = if (isDark) SpeedDownDark else SpeedDown
+    val upColor = if (isDark) SpeedUpDark else SpeedUp
+    val liveColor = if (isDark) LiveGreenDark else LiveGreen
+
+    GlassCard(modifier = modifier.fillMaxWidth().testTag("live_speed_card")) {
         Column(
-            modifier = Modifier.padding(18.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp)
         ) {
+            // Status row: network chip + session peak chip
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.glassColor),
-                        contentAlignment = Alignment.Center
+                GlassChip {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Bolt,
-                            contentDescription = null,
-                            tint = if (isRunning) Color(0xFF34C759) else MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                            modifier = Modifier.size(16.dp)
+                        AppIcon(
+                            resId = when (network) {
+                                SpeedMeterService.NETWORK_WIFI -> R.drawable.ic_wifi
+                                SpeedMeterService.NETWORK_MOBILE -> R.drawable.ic_cellular
+                                else -> R.drawable.ic_warning
+                            },
+                            contentDescription = "Network type",
+                            tint = if (network == SpeedMeterService.NETWORK_NONE) {
+                                secondary()
+                            } else {
+                                MaterialTheme.colorScheme.onBackground
+                            },
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = when (network) {
+                                SpeedMeterService.NETWORK_WIFI -> "Wi-Fi"
+                                SpeedMeterService.NETWORK_MOBILE -> "Mobile"
+                                else -> "Offline"
+                            },
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(RoundedCornerShape(100.dp))
+                                .background(if (isRunning) liveColor else Color(0xFFB8BEC8))
                         )
                     }
-                    Text(
-                        text = "Real-Time Speed",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
                 }
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .clip(RoundedCornerShape(100.dp))
-                            .background(if (isRunning) Color(0xFF34C759) else Color.Gray)
-                    )
-                    Text(
-                        text = if (isRunning) "ENGINE ACTIVE" else "ENGINE INACTIVE",
-                        fontSize = 8.sp,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-                    )
+                GlassChip {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        AppIcon(
+                            resId = R.drawable.ic_arrow_down,
+                            contentDescription = null,
+                            tint = downColor,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            text = "PEAK ${SpeedFormatter.format(peakDl)}",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            color = secondary()
+                        )
+                    }
                 }
             }
 
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Big numbers: download + upload
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1.15f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(downColor.copy(alpha = 0.12f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AppIcon(
+                                resId = R.drawable.ic_arrow_down,
+                                contentDescription = "Download",
+                                tint = downColor,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        Text(
+                            text = "DOWNLOAD",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 1.sp,
+                            color = secondary()
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    val (dlValue, dlUnit) = SpeedFormatter.split(dlSpeed)
+                    Row(verticalAlignment = Alignment.FirstBaseline) {
+                        Text(
+                            text = dlValue,
+                            fontSize = 40.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.testTag("live_download_speed_text")
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = dlUnit,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            fontFamily = FontFamily.Monospace,
+                            color = secondary()
+                        )
+                    }
+                }
+
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 14.dp)
+                    .width(1.dp)
+                    .height(48.dp)
+                    .background(glassBorder)
+            )
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(upColor.copy(alpha = 0.12f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AppIcon(
+                                resId = R.drawable.ic_arrow_up,
+                                contentDescription = "Upload",
+                                tint = upColor,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        Text(
+                            text = "UPLOAD",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 1.sp,
+                            color = secondary()
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    val (ulValue, ulUnit) = SpeedFormatter.split(ulSpeed)
+                    Row(verticalAlignment = Alignment.FirstBaseline) {
+                        Text(
+                            text = ulValue,
+                            fontSize = 27.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.testTag("live_upload_speed_text")
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = ulUnit,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            fontFamily = FontFamily.Monospace,
+                            color = secondary()
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // 30-second sparkline
+            SpeedSparkline(dlHistory = dlHistory, ulHistory = ulHistory)
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "LAST 30 SECONDS",
+                    fontSize = 8.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 1.sp,
+                    color = secondary().copy(alpha = 0.7f)
+                )
+                Text(
+                    text = if (isRunning) "REAL-TIME" else "WAITING FOR DATA",
+                    fontSize = 8.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 1.sp,
+                    color = if (isRunning) liveColor else secondary().copy(alpha = 0.7f)
+                )
+            }
+        }
+    }
+}
+
+/** Thin live graph of the last 30 seconds: download (area+line) & upload (line). */
+@Composable
+fun SpeedSparkline(
+    dlHistory: List<Long>,
+    ulHistory: List<Long>,
+    modifier: Modifier = Modifier
+) {
+    val isDark = isDarkModeActive()
+    val downColor = if (isDark) SpeedDownDark else SpeedDown
+    val upColor = if (isDark) SpeedUpDark else SpeedUp
+
+    Canvas(modifier = modifier.fillMaxWidth().height(54.dp)) {
+        val points = 30
+
+        fun samples(list: List<Long>): List<Float> {
+            val recent = list.takeLast(points)
+            return (List(points - recent.size) { 0f } + recent.map { it.toFloat() })
+        }
+
+        val dl = samples(dlHistory)
+        val ul = samples(ulHistory)
+        val maxVal = (dl.maxOrNull() ?: 0f).coerceAtLeast(1024f) // 1 KB/s baseline
+
+        fun toPath(vals: List<Float>): Path {
+            val path = Path()
+            vals.forEachIndexed { i, v ->
+                val x = i.toFloat() / (points - 1) * size.width
+                val y = size.height - (v / maxVal * size.height).coerceIn(0f, size.height)
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            return path
+        }
+
+        val dlPath = toPath(dl)
+        val fillPath = Path(dlPath).apply {
+            lineTo(size.width, size.height)
+            lineTo(0f, size.height)
+            close()
+        }
+        drawPath(
+            fillPath,
+            Brush.verticalGradient(listOf(downColor.copy(alpha = 0.28f), downColor.copy(alpha = 0.02f)))
+        )
+        drawPath(dlPath, downColor, style = Stroke(width = 2.2f, cap = StrokeCap.Round))
+        drawPath(toPath(ul), upColor, style = Stroke(width = 1.8f, cap = StrokeCap.Round))
+    }
+}
+
+// ============================== USAGE CARDS ==============================
+
+@Composable
+fun UsageCard(
+    title: String,
+    iconRes: Int,
+    data: DataUsage,
+    modifier: Modifier = Modifier
+) {
+    val isDark = isDarkModeActive()
+    val accent = if (isDark) LiveGreenDark else LiveGreen
+
+    GlassCard(modifier = modifier) {
+        Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(accent.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AppIcon(
+                        resId = iconRes,
+                        contentDescription = null,
+                        tint = accent,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+                Text(
+                    text = title,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            }
+
             Spacer(modifier = Modifier.height(14.dp))
+            Text(
+                text = "TODAY",
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 1.sp,
+                color = secondary()
+            )
+            Text(
+                text = BytesFormatter.format(data.total.toBytes()),
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider(color = glassBorder.copy(alpha = 0.6f))
+            Spacer(modifier = Modifier.height(10.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowDownward,
-                            contentDescription = "Download link",
-                            tint = Color(0xFF34C759),
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Text(
-                            text = "DOWNLOAD",
-                            fontSize = 9.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-                        )
-                    }
+                MiniStat(
+                    iconRes = R.drawable.ic_arrow_down,
+                    label = "DOWN",
+                    valueMb = data.download,
+                    tint = SpeedDownC()
+                )
+                MiniStat(
+                    iconRes = R.drawable.ic_arrow_up,
+                    label = "UP",
+                    valueMb = data.upload,
+                    tint = SpeedUpC()
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MiniStat(
+    iconRes: Int,
+    label: String,
+    valueMb: Double,
+    tint: Color
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        AppIcon(
+            resId = iconRes,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(13.dp)
+        )
+        Column {
+            Text(
+                text = label,
+                fontSize = 8.5.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 0.8.sp,
+                color = secondary()
+            )
+            Text(
+                text = BytesFormatter.format(valueMb.toBytes()),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+        }
+    }
+}
+
+// ============================== TOTAL CARD ==============================
+
+@Composable
+fun TotalCard(
+    data: DataUsage,
+    limitProgress: Double?,
+    limitLabel: String,
+    modifier: Modifier = Modifier
+) {
+    val isDark = isDarkModeActive()
+    // Inverse-contrast "ink" card: black on light, white on dark (GPT style).
+    val cardColor = if (isDark) Color(0xFFF2F4F8) else Color(0xFF15181D)
+    val onCard = if (isDark) Color(0xFF15181D) else Color(0xFFF5F6F8)
+    val muted = onCard.copy(alpha = 0.55f)
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .shadow(
+                elevation = 12.dp,
+                shape = RoundedCornerShape(24.dp),
+                ambientColor = Color.Black.copy(alpha = if (isDark) 0.25f else 0.18f),
+                spotColor = Color.Black.copy(alpha = if (isDark) 0.25f else 0.22f)
+            )
+            .clip(RoundedCornerShape(24.dp))
+            .background(cardColor)
+            .border(1.dp, if (isDark) Color(0x33000000) else Color(0x29FFFFFF), RoundedCornerShape(24.dp))
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
+            Text(
+                text = "TODAY'S TOTAL",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 1.2.sp,
+                color = muted
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = BytesFormatter.format(data.total.toBytes()),
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                color = onCard
+            )
+
+            if (limitProgress != null) {
+                Spacer(modifier = Modifier.height(14.dp))
+                LinearProgressIndicator(
+                    progress = { limitProgress.coerceIn(0.0, 1.0).toFloat() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(100.dp))
+                        .height(6.dp),
+                    color = onCard,
+                    trackColor = onCard.copy(alpha = 0.15f),
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
                     Text(
-                        text = formatLiveSpeedValue(dlSpeed),
-                        fontSize = 28.sp,
+                        text = "MOBILE LIMIT $limitLabel",
+                        fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.testTag("live_download_speed_text")
+                        letterSpacing = 0.8.sp,
+                        color = muted
+                    )
+                    Text(
+                        text = "${(limitProgress * 100).toInt()}%",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        color = onCard
                     )
                 }
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowUpward,
-                            contentDescription = "Upload link",
-                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Text(
-                            text = "UPLOAD",
-                            fontSize = 9.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-                        )
-                    }
-                    Text(
-                        text = formatLiveSpeedValue(ulSpeed),
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.testTag("live_upload_speed_text")
+            } else {
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    MiniStatOnInk(
+                        iconRes = R.drawable.ic_arrow_down,
+                        label = "DOWNLOAD",
+                        valueMb = data.download,
+                        onCard = onCard,
+                        muted = muted
+                    )
+                    MiniStatOnInk(
+                        iconRes = R.drawable.ic_arrow_up,
+                        label = "UPLOAD",
+                        valueMb = data.upload,
+                        onCard = onCard,
+                        muted = muted
                     )
                 }
             }
@@ -973,11 +716,107 @@ fun LiveSpeedIndicatorCard() {
     }
 }
 
-fun formatLiveSpeedValue(bytesPerSec: Long): String {
-    val kb = bytesPerSec / 1024.0
-    return if (kb >= 1024.0) {
-        String.format("%.1f MB/s", kb / 1024.0)
-    } else {
-        String.format("%.1f KB/s", kb)
+@Composable
+private fun MiniStatOnInk(
+    iconRes: Int,
+    label: String,
+    valueMb: Double,
+    onCard: Color,
+    muted: Color
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        AppIcon(
+            resId = iconRes,
+            contentDescription = null,
+            tint = muted,
+            modifier = Modifier.size(13.dp)
+        )
+        Column {
+            Text(
+                text = label,
+                fontSize = 8.5.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 0.8.sp,
+                color = muted
+            )
+            Text(
+                text = BytesFormatter.format(valueMb.toBytes()),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                color = onCard
+            )
+        }
+    }
+}
+
+// ============================== PERMISSION HINT ==============================
+
+@Composable
+fun UsageAccessHintCard(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+
+    GlassCard(modifier = modifier.fillMaxWidth().testTag("usage_access_hint_card")) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(com.example.ui.theme.AccentWarning.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center
+            ) {
+                AppIcon(
+                    resId = R.drawable.ic_shield,
+                    contentDescription = null,
+                    tint = com.example.ui.theme.AccentWarning,
+                    modifier = Modifier.size(17.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Usage Access",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    text = "Live speed works everywhere. Grant Usage Access for exact daily totals.",
+                    fontSize = 11.sp,
+                    color = secondary()
+                )
+            }
+            Spacer(modifier = Modifier.width(10.dp))
+            TextButton(
+                onClick = {
+                    try {
+                        context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                },
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(100.dp))
+                    .background(MaterialTheme.colorScheme.primary)
+                    .testTag("grant_permission_button")
+            ) {
+                Text(
+                    text = "GRANT",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+            }
+        }
     }
 }

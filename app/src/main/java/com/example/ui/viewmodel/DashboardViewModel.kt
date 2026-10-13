@@ -1,18 +1,14 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
-import android.content.Context
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
-import android.net.TrafficStats
-import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
-import com.example.data.DataUsageEntity
 import com.example.data.DataUsageRepository
-import com.example.data.NetworkStatsHelper
 import com.example.data.PreferencesManager
+import com.example.data.UsageResetter
+import com.example.util.BytesFormatter
+import com.example.util.DateFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -20,12 +16,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import kotlinx.coroutines.withContext
 
+/** Live "today" values in MB (real bytes, never simulated). */
 data class DataUsage(
     val total: Double,      // in MB
     val download: Double,   // in MB
@@ -34,156 +28,114 @@ data class DataUsage(
 
 class DashboardViewModel(application: Application) : AndroidViewModel(application) {
 
+    private val repository = DataUsageRepository(AppDatabase.getDatabase(application).dataUsageDao())
     private val preferencesManager = PreferencesManager(application)
-    private val database = AppDatabase.getDatabase(application)
-    private val repository = DataUsageRepository(database.dataUsageDao())
-    private val networkStatsHelper = NetworkStatsHelper(application)
 
-    // Exposed visual data usage states mapping directly into Room single source of truth
-    val mobileDataState = MutableStateFlow(DataUsage(0.0, 0.0, 0.0))
-    val wifiDataState = MutableStateFlow(DataUsage(0.0, 0.0, 0.0))
-
-    private val _isAddOnActive = MutableStateFlow(false)
-    val isAddOnActive: StateFlow<Boolean> = _isAddOnActive.asStateFlow()
-
-    private val _addOnUsage = MutableStateFlow(DataUsage(0.0, 0.0, 0.0))
-    val addOnUsage: StateFlow<DataUsage> = _addOnUsage.asStateFlow()
-
-    private val _showConfirmationDialog = MutableStateFlow(false)
-    val showConfirmationDialog: StateFlow<Boolean> = _showConfirmationDialog.asStateFlow()
-
-    private val _showResetConfirmationDialog = MutableStateFlow(false)
-    val showResetConfirmationDialog: StateFlow<Boolean> = _showResetConfirmationDialog.asStateFlow()
+    val mobileData = MutableStateFlow(DataUsage(0.0, 0.0, 0.0))
+    val wifiData = MutableStateFlow(DataUsage(0.0, 0.0, 0.0))
 
     private val _totalUsage = MutableStateFlow(DataUsage(0.0, 0.0, 0.0))
     val totalUsage: StateFlow<DataUsage> = _totalUsage.asStateFlow()
 
-    init {
-        // Hydrate configuration states and start background ticker sync
-        viewModelScope.launch {
-            preferencesManager.isAddOnActiveFlow.collect { active ->
-                _isAddOnActive.value = active
-            }
-        }
+    /** 0.0 .. 1.0 progress towards the daily mobile limit; null when no limit is set. */
+    private val _limitProgress = MutableStateFlow<Double?>(null)
+    val limitProgress: StateFlow<Double?> = _limitProgress.asStateFlow()
 
-        // Keep local Compose model states updated directly from today's Database changes (Single Source of Truth)
+    private val _mobileLimitLabel = MutableStateFlow("")
+    val mobileLimitLabel: StateFlow<String> = _mobileLimitLabel.asStateFlow()
+
+    private val _showResetDialog = MutableStateFlow(false)
+    val showResetDialog: StateFlow<Boolean> = _showResetDialog.asStateFlow()
+
+    val permissionGranted: StateFlow<Boolean> =
+        com.example.services.SpeedMeterService.permissionGrantedFlow
+
+    init {
+        // Follow today's row, rolling over automatically at midnight.
         viewModelScope.launch {
             var currentCollectedDate: String? = null
             var activeCollectionJob: Job? = null
-
             while (true) {
-                val todayString = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-                if (activeCollectionJob == null || todayString != currentCollectedDate) {
+                val today = DateFormatter.day()
+                if (activeCollectionJob == null || today != currentCollectedDate) {
                     activeCollectionJob?.cancel()
-                    currentCollectedDate = todayString
+                    currentCollectedDate = today
                     activeCollectionJob = launch {
-                        repository.getDataByDate(todayString).collect { todayEntity ->
-                            if (todayEntity != null) {
-                                val mobileMb = bytesToMb(todayEntity.mobileDataUsed)
-                                val wifiMb = bytesToMb(todayEntity.wifiDataUsed)
-                                val addOnMb = bytesToMb(todayEntity.addOnDataUsed)
-
-                                mobileDataState.value = DataUsage(mobileMb, mobileMb * 0.85, mobileMb * 0.15)
-                                wifiDataState.value = DataUsage(wifiMb, wifiMb * 0.83, wifiMb * 0.17)
-                                _addOnUsage.value = DataUsage(addOnMb, addOnMb * 0.84, addOnMb * 0.16)
+                        repository.getDataByDate(today).collect { entity ->
+                            if (entity != null) {
+                                mobileData.value = DataUsage(
+                                    total = BytesFormatter.toMb(entity.mobileTotal),
+                                    download = BytesFormatter.toMb(entity.mobileRx),
+                                    upload = BytesFormatter.toMb(entity.mobileTx)
+                                )
+                                wifiData.value = DataUsage(
+                                    total = BytesFormatter.toMb(entity.wifiTotal),
+                                    download = BytesFormatter.toMb(entity.wifiRx),
+                                    upload = BytesFormatter.toMb(entity.wifiTx)
+                                )
                             } else {
-                                // Reset to 0 if there are no database entries
-                                mobileDataState.value = DataUsage(0.0, 0.0, 0.0)
-                                wifiDataState.value = DataUsage(0.0, 0.0, 0.0)
-                                _addOnUsage.value = DataUsage(0.0, 0.0, 0.0)
+                                mobileData.value = DataUsage(0.0, 0.0, 0.0)
+                                wifiData.value = DataUsage(0.0, 0.0, 0.0)
                             }
                         }
                     }
                 }
-                delay(5000) // Recheck date every 5 seconds to support midnight transition seamlessly
+                delay(5_000L) // recheck date for seamless midnight transition
             }
         }
 
-        // Keep grand consolidated sum synced dynamically
+        // Consolidated total.
         viewModelScope.launch {
-            combine(
-                mobileDataState,
-                wifiDataState,
-                _addOnUsage
-            ) { mob, wifi, addon ->
+            combine(mobileData, wifiData) { mob, wifi ->
                 DataUsage(
-                    total = mob.total + wifi.total + addon.total,
-                    download = mob.download + wifi.download + addon.download,
-                    upload = mob.upload + wifi.upload + addon.upload
+                    total = mob.total + wifi.total,
+                    download = mob.download + wifi.download,
+                    upload = mob.upload + wifi.upload
                 )
             }.collect { total ->
                 _totalUsage.value = total
             }
         }
-    }
 
-    fun requestStartTracking() {
-        _showConfirmationDialog.value = true
-    }
-
-    fun dismissDialog() {
-        _showConfirmationDialog.value = false
-    }
-
-    fun confirmStartTracking() {
-        _showConfirmationDialog.value = false
+        // Daily mobile limit progress.
         viewModelScope.launch {
-            preferencesManager.setAddOnActive(true)
-            val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-            preferencesManager.saveAddOnActivationDate(today)
-
-            // Setup mobile baseline if permission is present
-            if (networkStatsHelper.isPermissionGranted()) {
-                val currentMobile = networkStatsHelper.getMobileBytesSinceMidnight()
-                preferencesManager.saveAddOnBaseline(currentMobile)
-            } else {
-                preferencesManager.saveAddOnBaseline(-1L)
+            combine(preferencesManager.mobileLimitFlow, preferencesManager.mobileLimitUnitFlow, mobileData) { limit, unit, mobile ->
+                if (limit > 0.0) {
+                    val factor = if (unit.uppercase() == "GB") 1024.0 else 1.0
+                    val limitMb = limit * factor
+                    mobile.total / limitMb to "${trimNumber(limit)} $unit"
+                } else {
+                    null to ""
+                }
+            }.collect { (progress, label) ->
+                _limitProgress.value = progress?.coerceIn(0.0, 1.0)
+                _mobileLimitLabel.value = label
             }
         }
     }
 
-    fun stopTracking() {
-        viewModelScope.launch {
-            val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-            val existing = repository.getDataByDate(today).first()
-            val currentAddOnBytes = existing?.addOnDataUsed ?: 0L
-            preferencesManager.saveAddOnSavedToday(currentAddOnBytes, today)
-
-            preferencesManager.setAddOnActive(false)
-            preferencesManager.saveAddOnBaseline(0L)
-            preferencesManager.saveAddOnActivationDate("")
-        }
-    }
+    private fun trimNumber(value: Double): String =
+        if (value % 1.0 == 0.0) value.toInt().toString() else value.toString()
 
     fun requestResetTodayUsage() {
-        _showResetConfirmationDialog.value = true
+        _showResetDialog.value = true
     }
 
     fun dismissResetDialog() {
-        _showResetConfirmationDialog.value = false
+        _showResetDialog.value = false
     }
 
     fun confirmResetTodayUsage() {
-        _showResetConfirmationDialog.value = false
+        _showResetDialog.value = false
         resetTodayUsage()
     }
 
     fun resetTodayUsage() {
+        val app = getApplication<Application>()
         viewModelScope.launch(Dispatchers.IO) {
-            val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-            if (networkStatsHelper.isPermissionGranted()) {
-                val rawMobile = networkStatsHelper.getMobileBytesSinceMidnight()
-                val rawWifi = networkStatsHelper.getWifiBytesSinceMidnight()
-                preferencesManager.saveTodayOffsets(rawMobile, rawWifi, today)
-            } else {
-                preferencesManager.resetTodayOffsets()
-            }
-            database.dataUsageDao().deleteTodayData(today)
-            preferencesManager.resetAddOnUsage()
+            UsageResetter.resetToday(app)
+            mobileData.value = DataUsage(0.0, 0.0, 0.0)
+            wifiData.value = DataUsage(0.0, 0.0, 0.0)
         }
-    }
-
-    private fun bytesToMb(bytes: Long): Double {
-        return bytes / (1024.0 * 1024.0)
     }
 }

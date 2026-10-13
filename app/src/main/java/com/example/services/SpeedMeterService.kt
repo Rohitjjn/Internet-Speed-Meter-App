@@ -3,6 +3,7 @@ package com.example.services
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -14,17 +15,23 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
-import android.net.TrafficStats
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.IconCompat
+import com.example.MainActivity
 import com.example.R
 import com.example.data.AppDatabase
 import com.example.data.DataUsageEntity
 import com.example.data.DataUsageRepository
 import com.example.data.NetworkStatsHelper
 import com.example.data.PreferencesManager
+import com.example.data.ResetOffsets
+import com.example.data.TransportBytes
+import com.example.util.BytesFormatter
+import com.example.util.SpeedFormatter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -35,58 +42,68 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
+/**
+ * The real-time engine of the app.
+ *
+ * Architecture (this is what fixes "speed not updating like other meter apps"):
+ *
+ *  1. [startSpeedTicker] — a lean 1 Hz loop on Dispatchers.Default. It ONLY reads
+ *     counters and publishes speed. No Room, no NetworkStatsManager, no bitmap
+ *     work in the hot path (icon is cached) — so the loop keeps a steady
+ *     1-second cadence even on slow devices, exactly like dedicated speed apps.
+ *
+ *  2. [startUsageAccounting] — a slow (15 s) loop that does the expensive work:
+ *     NetworkStatsManager queries and Room upserts for the daily usage cards.
+ *
+ *  3. Counter sources: TrafficStats (primary) + /proc/net/dev (fallback) with a
+ *     health check that switches automatically when a source goes stale
+ *     (happens on some OEM ROMs where TrafficStats totals are restricted).
+ */
 class SpeedMeterService : Service() {
 
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
     private var tickerJob: Job? = null
-    private var useBitmapIcon = true // Enable status-bar custom bitmap speed indicator by default
+    private var accountingJob: Job? = null
 
-    private lateinit var database: AppDatabase
     private lateinit var repository: DataUsageRepository
     private lateinit var preferencesManager: PreferencesManager
+    private lateinit var networkStatsHelper: NetworkStatsHelper
 
+    // ----- daily accounting state -----
+    private var hasUsageStatsPermission = false
+    private var lastAccountedDay = ""
+    private var resetOffsets = ResetOffsets()
+    // Integrated fallback accumulators (used when "Usage access" is not granted):
+    // every 1s tick delta is attributed to the active transport.
+    private var integratedMobileRx = 0L
+    private var integratedMobileTx = 0L
+    private var integratedWifiRx = 0L
+    private var integratedWifiTx = 0L
+
+    // ----- status-bar speed icon cache -----
     private var cachedSpeedIcon: IconCompat? = null
     private var lastSpeedText = ""
     private var lastSpeedUnit = ""
 
-    // High-performance reactive cache to bypass expensive Disk I/O inside the 1-second busy loop
-    private var cachedIsAddOnActive = false
-    private var cachedTodayOffsetDate = ""
-    private var cachedTodayMobileOffset = 0L
-    private var cachedTodayWifiOffset = 0L
-    private var cachedAddOnBaseline = 0L
-    private var cachedAddOnSavedToday = 0L
-    private var cachedAddOnSavedTodayDate = ""
-    private var cachedAddOnActivationDate = ""
-    private var cachedMobileLimit = 2.0
-    private var cachedMobileLimitUnit = "GB"
-    private var cachedAddonLimit = 500.0
-    private var cachedAddonLimitUnit = "MB"
-
-    private var cachedTodayEntity: DataUsageEntity? = null
-    private var trackingDate = ""
-    private var dbCollectionJob: Job? = null
-
-    // Persistent alert flags matching daily boundaries
-    private var alertedMobile50 = false
-    private var alertedMobile90 = false
-    private var alertedMobile100 = false
-
-    private var alertedAddon50 = false
-    private var alertedAddon90 = false
-    private var alertedAddon100 = false
-
-    private var lastTrackingDate = ""
-
     companion object {
         private const val NOTIFICATION_ID = 1001
-        private const val CHANNEL_ID = "speed_meter_channel_id"
-        private const val ALERTS_CHANNEL_ID = "bandwidth_alerts_channel_id"
+        private const val CHANNEL_ID = "speed_meter_channel"
+
+        const val NETWORK_WIFI = "WIFI"
+        const val NETWORK_MOBILE = "MOBILE"
+        const val NETWORK_NONE = "NONE"
+
+        private const val TICK_MS = 1000L
+        private const val ACCOUNTING_PERIOD_MS = 15_000L
+        /** Windows longer than this mean the service was suspended — don't publish a misleading average. */
+        private const val MAX_VALID_WINDOW_MS = 4_000L
+        /** Ticks without any counter movement before we suspect a stale source. */
+        private const val STAGNANT_THRESHOLD = 5
+        /** Sparkline depth: last N seconds of speed samples. */
+        private const val HISTORY_SIZE = 60
 
         private val _downloadSpeedFlow = MutableStateFlow(0L) // bytes/sec
         val downloadSpeedFlow: StateFlow<Long> = _downloadSpeedFlow.asStateFlow()
@@ -94,54 +111,91 @@ class SpeedMeterService : Service() {
         private val _uploadSpeedFlow = MutableStateFlow(0L) // bytes/sec
         val uploadSpeedFlow: StateFlow<Long> = _uploadSpeedFlow.asStateFlow()
 
+        private val _dlHistoryFlow = MutableStateFlow<List<Long>>(emptyList())
+        val dlHistoryFlow: StateFlow<List<Long>> = _dlHistoryFlow.asStateFlow()
+
+        private val _ulHistoryFlow = MutableStateFlow<List<Long>>(emptyList())
+        val ulHistoryFlow: StateFlow<List<Long>> = _ulHistoryFlow.asStateFlow()
+
+        private val _peakDownloadFlow = MutableStateFlow(0L) // bytes/sec, this session
+        val peakDownloadFlow: StateFlow<Long> = _peakDownloadFlow.asStateFlow()
+
+        private val _peakUploadFlow = MutableStateFlow(0L)
+        val peakUploadFlow: StateFlow<Long> = _peakUploadFlow.asStateFlow()
+
+        private val _networkTypeFlow = MutableStateFlow(NETWORK_NONE)
+        val networkTypeFlow: StateFlow<String> = _networkTypeFlow.asStateFlow()
+
         private val _isServiceRunning = MutableStateFlow(false)
         val isServiceRunning: StateFlow<Boolean> = _isServiceRunning.asStateFlow()
 
+        private val _todayUsageFlow = MutableStateFlow(DataUsageEntity("1970-01-01"))
+        val todayUsageFlow: StateFlow<DataUsageEntity> = _todayUsageFlow.asStateFlow()
+
+        private val _permissionGrantedFlow = MutableStateFlow(false)
+        val permissionGrantedFlow: StateFlow<Boolean> = _permissionGrantedFlow.asStateFlow()
+
         fun startService(context: Context) {
             try {
-                val intent = Intent(context, SpeedMeterService::class.java)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(intent)
-                } else {
-                    context.startService(intent)
-                }
+                ContextCompat.startForegroundService(context, Intent(context, SpeedMeterService::class.java))
             } catch (e: Exception) {
+                // Background start blocked by the OS (Android 14/15+); the WorkManager
+                // watchdog or the next app open will (re)start the service.
                 e.printStackTrace()
             }
         }
 
         fun stopService(context: Context) {
             try {
-                val intent = Intent(context, SpeedMeterService::class.java)
-                context.stopService(intent)
+                context.stopService(Intent(context, SpeedMeterService::class.java))
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }
+
+        fun currentDay(): String =
+            java.text.SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(java.util.Date())
     }
 
     override fun onCreate() {
         super.onCreate()
-        database = AppDatabase.getDatabase(this)
-        repository = DataUsageRepository(database.dataUsageDao())
+        repository = DataUsageRepository(AppDatabase.getDatabase(this).dataUsageDao())
         preferencesManager = PreferencesManager(this)
-        createNotificationChannels()
-        startCachingPreferenceFlows()
+        networkStatsHelper = NetworkStatsHelper(this)
+        createNotificationChannel()
+        // Keep the "reset today" baseline fresh in memory (DataStore is async).
+        serviceScope.launch {
+            preferencesManager.resetOffsetsFlow.collect { resetOffsets = it }
+        }
+        startSpeedTicker()
+        startUsageAccounting()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         _isServiceRunning.value = true
         startForegroundWithNotification()
-        startSpeedTicker()
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /**
+     * Android 15+ (API 35): dataSync FGS get a 6-hour-per-day budget. When the
+     * budget is exhausted the system calls this. We restart the service to get a
+     * fresh budget; if the OS refuses the background restart we stop cleanly.
+     */
+    override fun onTimeout(startId: Int, timeoutType: Int) {
+        try {
+            ContextCompat.startForegroundService(this, Intent(this, SpeedMeterService::class.java))
+        } catch (e: Exception) {
+            stopSelf()
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         tickerJob?.cancel()
-        dbCollectionJob?.cancel()
+        accountingJob?.cancel()
         serviceJob.cancel()
         _isServiceRunning.value = false
         _downloadSpeedFlow.value = 0L
@@ -151,65 +205,285 @@ class SpeedMeterService : Service() {
         lastSpeedUnit = ""
     }
 
-    private fun startCachingPreferenceFlows() {
-        serviceScope.launch {
-            preferencesManager.isAddOnActiveFlow.collect { cachedIsAddOnActive = it }
-        }
-        serviceScope.launch {
-            preferencesManager.todayOffsetDateFlow.collect { cachedTodayOffsetDate = it }
-        }
-        serviceScope.launch {
-            preferencesManager.todayMobileOffsetFlow.collect { cachedTodayMobileOffset = it }
-        }
-        serviceScope.launch {
-            preferencesManager.todayWifiOffsetFlow.collect { cachedTodayWifiOffset = it }
-        }
-        serviceScope.launch {
-            preferencesManager.addOnBaselineFlow.collect { cachedAddOnBaseline = it }
-        }
-        serviceScope.launch {
-            preferencesManager.addOnSavedTodayFlow.collect { cachedAddOnSavedToday = it }
-        }
-        serviceScope.launch {
-            preferencesManager.addOnSavedTodayDateFlow.collect { cachedAddOnSavedTodayDate = it }
-        }
-        serviceScope.launch {
-            preferencesManager.addOnActivationDateFlow.collect { cachedAddOnActivationDate = it }
-        }
-        serviceScope.launch {
-            preferencesManager.mobileLimitFlow.collect { cachedMobileLimit = it }
-        }
-        serviceScope.launch {
-            preferencesManager.mobileLimitUnitFlow.collect { cachedMobileLimitUnit = it }
-        }
-        serviceScope.launch {
-            preferencesManager.addonLimitFlow.collect { cachedAddonLimit = it }
-        }
-        serviceScope.launch {
-            preferencesManager.addonLimitUnitFlow.collect { cachedAddonLimitUnit = it }
-        }
-    }
+    // ================================ SPEED TICKER ================================
 
-    private fun startDbTrackingForDate(dateStr: String) {
-        if (trackingDate == dateStr) return
-        trackingDate = dateStr
-        dbCollectionJob?.cancel()
-        dbCollectionJob = serviceScope.launch {
-            repository.getDataByDate(dateStr).collect { entity ->
-                cachedTodayEntity = entity
+    private fun startSpeedTicker() {
+        tickerJob = serviceScope.launch(Dispatchers.Default) {
+            var activeSource = CounterSource.TRAFFIC_STATS
+            var lastSample = TrafficCounterReader.read(activeSource)
+            // Cold-start source pick: if TrafficStats is dead (0/0 or stale on some ROMs)
+            // but the kernel counters have data, start with /proc/net/dev.
+            if (lastSample.isZero) {
+                val kernelSample = TrafficCounterReader.read(CounterSource.PROC_NET_DEV)
+                if (!kernelSample.isZero) {
+                    activeSource = CounterSource.PROC_NET_DEV
+                    lastSample = kernelSample
+                }
+            }
+            var stagnantTicks = 0
+            val dlHistory = ArrayDeque<Long>()
+            val ulHistory = ArrayDeque<Long>()
+            var nextTickAt = SystemClock.elapsedRealtime() + TICK_MS
+
+            while (true) {
+                // Deadline scheduling: keeps a steady 1 Hz cadence without drift.
+                val now = SystemClock.elapsedRealtime()
+                delay((nextTickAt - now).coerceIn(20L, 5_000L))
+                val readAt = SystemClock.elapsedRealtime()
+                nextTickAt += TICK_MS
+                if (readAt > nextTickAt + TICK_MS) nextTickAt = readAt + TICK_MS // re-anchor after suspension
+
+                val sample = TrafficCounterReader.read(activeSource)
+
+                // ---- Source health check: switch when the active source is stale ----
+                if (!sample.movedFrom(lastSample)) {
+                    stagnantTicks++
+                    if (stagnantTicks >= STAGNANT_THRESHOLD) {
+                        val other = if (activeSource == CounterSource.TRAFFIC_STATS) {
+                            CounterSource.PROC_NET_DEV
+                        } else {
+                            CounterSource.TRAFFIC_STATS
+                        }
+                        val otherSample = TrafficCounterReader.read(other)
+                        if (otherSample.movedFrom(lastSample) || (!lastSample.total > 0L && !otherSample.isZero)) {
+                            activeSource = other
+                            lastSample = otherSample
+                            stagnantTicks = 0
+                            continue
+                        }
+                    }
+                } else {
+                    stagnantTicks = 0
+                }
+
+                val windowMs = sample.timestampMs - lastSample.timestampMs
+                if (windowMs in 1..MAX_VALID_WINDOW_MS) {
+                    val dlBytes = (sample.rx - lastSample.rx).coerceAtLeast(0L)
+                    val ulBytes = (sample.tx - lastSample.tx).coerceAtLeast(0L)
+                    val windowSec = windowMs / 1000.0
+                    val dlSpeed = (dlBytes / windowSec).toLong()
+                    val ulSpeed = (ulBytes / windowSec).toLong()
+
+                    // Integrated daily accounting fallback (no "Usage access" permission):
+                    // attribute real per-second bytes to the active transport.
+                    if (!hasUsageStatsPermission) {
+                        when (getActiveNetworkType()) {
+                            NETWORK_WIFI -> {
+                                integratedWifiRx += dlBytes
+                                integratedWifiTx += ulBytes
+                            }
+                            NETWORK_MOBILE -> {
+                                integratedMobileRx += dlBytes
+                                integratedMobileTx += ulBytes
+                            }
+                            else -> Unit
+                        }
+                    }
+
+                    publishSpeed(dlSpeed, ulSpeed, dlHistory, ulHistory)
+                } else {
+                    // Service was suspended (Doze / killed); an averaged speed across the
+                    // gap would be a fake spike or dip — report 0 like real meters do.
+                    publishSpeed(0L, 0L, dlHistory, ulHistory)
+                }
+                lastSample = sample
             }
         }
     }
 
+    private fun publishSpeed(
+        dlSpeed: Long,
+        ulSpeed: Long,
+        dlHistory: ArrayDeque<Long>,
+        ulHistory: ArrayDeque<Long>
+    ) {
+        _downloadSpeedFlow.value = dlSpeed
+        _uploadSpeedFlow.value = ulSpeed
+
+        dlHistory.addLast(dlSpeed)
+        ulHistory.addLast(ulSpeed)
+        while (dlHistory.size > HISTORY_SIZE) dlHistory.removeFirst()
+        while (ulHistory.size > HISTORY_SIZE) ulHistory.removeFirst()
+        _dlHistoryFlow.value = dlHistory.toList()
+        _ulHistoryFlow.value = ulHistory.toList()
+
+        if (dlSpeed > _peakDownloadFlow.value) _peakDownloadFlow.value = dlSpeed
+        if (ulSpeed > _peakUploadFlow.value) _peakUploadFlow.value = ulSpeed
+
+        updateNotification(dlSpeed, ulSpeed)
+    }
+
+    private fun getActiveNetworkType(): String {
+        return try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val network = cm.activeNetwork ?: return NETWORK_NONE
+                val capabilities = cm.getNetworkCapabilities(network) ?: return NETWORK_NONE
+                when {
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NETWORK_WIFI
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> NETWORK_MOBILE
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> NETWORK_WIFI
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> NETWORK_WIFI
+                    else -> NETWORK_NONE
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                val info = cm.activeNetworkInfo ?: return NETWORK_NONE
+                @Suppress("DEPRECATION")
+                when (info.type) {
+                    ConnectivityManager.TYPE_WIFI -> NETWORK_WIFI
+                    ConnectivityManager.TYPE_MOBILE -> NETWORK_MOBILE
+                    ConnectivityManager.TYPE_ETHERNET -> NETWORK_WIFI
+                    else -> NETWORK_NONE
+                }
+            }
+        } catch (e: Exception) {
+            NETWORK_NONE
+        }
+    }
+
+    // ============================ USAGE ACCOUNTING (SLOW) ============================
+
+    private fun startUsageAccounting() {
+        accountingJob = serviceScope.launch {
+            // Make sure the reset baseline is loaded before the first accounting pass.
+            try {
+                resetOffsets = preferencesManager.resetOffsetsFlow.first()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            // Restore integrated accumulators from the DB after a service/process restart.
+            networkStatsHelper.isPermissionGranted().let { granted ->
+                hasUsageStatsPermission = granted
+                _permissionGrantedFlow.value = granted
+            }
+            if (!hasUsageStatsPermission) {
+                val row = repository.getByDate(currentDay())
+                if (row != null) {
+                    integratedMobileRx = row.mobileRx
+                    integratedMobileTx = row.mobileTx
+                    integratedWifiRx = row.wifiRx
+                    integratedWifiTx = row.wifiTx
+                }
+            }
+            _todayUsageFlow.value = buildTodayEntity()
+            while (true) {
+                delay(ACCOUNTING_PERIOD_MS)
+                accountUsage()
+            }
+        }
+    }
+
+    private suspend fun accountUsage() {
+        val today = currentDay()
+
+        // Midnight rollover: new day starts fresh for the integrated path.
+        if (lastAccountedDay.isNotEmpty() && lastAccountedDay != today && !hasUsageStatsPermission) {
+            integratedMobileRx = 0L
+            integratedMobileTx = 0L
+            integratedWifiRx = 0L
+            integratedWifiTx = 0L
+        }
+        lastAccountedDay = today
+
+        // Permission state can change at any time (user grants/revokes in Settings).
+        val granted = networkStatsHelper.isPermissionGranted()
+        if (granted && !hasUsageStatsPermission) {
+            // System counters become authoritative — no seeding needed.
+            hasUsageStatsPermission = true
+        } else if (!granted && hasUsageStatsPermission) {
+            // Falling back to integrated accounting: continue from the current row.
+            hasUsageStatsPermission = false
+            val row = repository.getByDate(today)
+            if (row != null) {
+                integratedMobileRx = row.mobileRx
+                integratedMobileTx = row.mobileTx
+                integratedWifiRx = row.wifiRx
+                integratedWifiTx = row.wifiTx
+            }
+        }
+        _permissionGrantedFlow.value = hasUsageStatsPermission
+
+        val entity = if (hasUsageStatsPermission) {
+            // REAL system-wide counters per transport, minus the "reset today" baseline.
+            val mobile = networkStatsHelper.getMobileSinceMidnight()
+            val wifi = networkStatsHelper.getWifiOrEthernetSinceMidnight()
+            val m = if (resetOffsets.appliesTo(today)) {
+                mobile - TransportBytes(resetOffsets.mobileRx, resetOffsets.mobileTx)
+            } else mobile
+            val w = if (resetOffsets.appliesTo(today)) {
+                wifi - TransportBytes(resetOffsets.wifiRx, resetOffsets.wifiTx)
+            } else wifi
+            DataUsageEntity(today, m.rx, m.tx, w.rx, w.tx)
+        } else {
+            // Detect an external "reset today" (row deleted by the UI).
+            if ((integratedMobileRx + integratedMobileTx + integratedWifiRx + integratedWifiTx) > 0L) {
+                val existing = repository.getByDate(today)
+                if (existing == null) {
+                    integratedMobileRx = 0L
+                    integratedMobileTx = 0L
+                    integratedWifiRx = 0L
+                    integratedWifiTx = 0L
+                }
+            }
+            buildTodayEntity()
+        }
+
+        try {
+            repository.upsertData(entity)
+            _todayUsageFlow.value = entity
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun buildTodayEntity(): DataUsageEntity {
+        val today = currentDay()
+        return DataUsageEntity(today, integratedMobileRx, integratedMobileTx, integratedWifiRx, integratedWifiTx)
+    }
+
+    /**
+     * Resets today's counters. Persists a baseline (system-counter path) and
+     * wipes the row; the integrated path re-seeds itself from the missing row.
+     */
+    suspend fun resetToday() {
+        val today = currentDay()
+        if (networkStatsHelper.isPermissionGranted()) {
+            val m = networkStatsHelper.getMobileSinceMidnight()
+            val w = networkStatsHelper.getWifiOrEthernetSinceMidnight()
+            resetOffsets = ResetOffsets(today, m.rx, m.tx, w.rx, w.tx)
+            preferencesManager.saveResetOffsets(resetOffsets)
+        }
+        integratedMobileRx = 0L
+        integratedMobileTx = 0L
+        integratedWifiRx = 0L
+        integratedWifiTx = 0L
+        repository.deleteByDate(today)
+        _todayUsageFlow.value = DataUsageEntity(today)
+    }
+
+    // ================================ NOTIFICATION ================================
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Live speed ticker",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Shows real-time internet speed in the status bar."
+                setShowBadge(false)
+            }
+            nm.createNotificationChannel(channel)
+        }
+    }
+
     private fun startForegroundWithNotification() {
-        val notification = buildSpeedNotification(0L, 0L, 0L, 0L)
+        val notification = buildSpeedNotification(0L, 0L)
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                )
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
@@ -223,452 +497,33 @@ class SpeedMeterService : Service() {
         }
     }
 
-    private fun getActiveNetworkType(): String {
-        return try {
-            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val network = cm.activeNetwork ?: return "WIFI"
-                val capabilities = cm.getNetworkCapabilities(network) ?: return "WIFI"
-                when {
-                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WIFI"
-                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "MOBILE"
-                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "WIFI"
-                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "WIFI"
-                    else -> "WIFI"
-                }
-            } else {
-                @Suppress("DEPRECATION")
-                val info = cm.activeNetworkInfo ?: return "WIFI"
-                @Suppress("DEPRECATION")
-                when (info.type) {
-                    ConnectivityManager.TYPE_WIFI -> "WIFI"
-                    ConnectivityManager.TYPE_MOBILE -> "MOBILE"
-                    ConnectivityManager.TYPE_ETHERNET -> "WIFI"
-                    else -> "WIFI"
-                }
-            }
+    private fun updateNotification(dlBytes: Long, ulBytes: Long) {
+        try {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.notify(NOTIFICATION_ID, buildSpeedNotification(dlBytes, ulBytes))
         } catch (e: Exception) {
-            e.printStackTrace()
-            "WIFI"
+            // Notifications disabled — ticker keeps running, UI flows are unaffected.
         }
     }
 
-    private fun startSpeedTicker() {
-        tickerJob?.cancel()
-        tickerJob = serviceScope.launch {
-            var lastRxBytes = TrafficStats.getTotalRxBytes()
-            var lastTxBytes = TrafficStats.getTotalTxBytes()
-            var lastTime = android.os.SystemClock.elapsedRealtime()
-            var lastProcessedDate = ""
-
-            while (true) {
-                delay(1000)
-
-                val currentRx = TrafficStats.getTotalRxBytes()
-                val currentTx = TrafficStats.getTotalTxBytes()
-                val currentTime = android.os.SystemClock.elapsedRealtime()
-
-                val timeDeltaMs = currentTime - lastTime
-                val timeDeltaSec = if (timeDeltaMs > 0) timeDeltaMs / 1000.0 else 1.0
-
-                // Calculate deltas, handling device reboot reset cases gracefully
-                val dlDelta = if (lastRxBytes in 1..currentRx) currentRx - lastRxBytes else 0L
-                val ulDelta = if (lastTxBytes in 1..currentTx) currentTx - lastTxBytes else 0L
-
-                lastRxBytes = currentRx
-                lastTxBytes = currentTx
-                lastTime = currentTime
-
-                // Scale deltas up to represent bytes per second in real-time
-                val dlSpeed = if (timeDeltaSec > 0.1 && !timeDeltaSec.isNaN() && !timeDeltaSec.isInfinite()) {
-                    (dlDelta / timeDeltaSec).toLong()
-                } else {
-                    dlDelta
-                }
-                val ulSpeed = if (timeDeltaSec > 0.1 && !timeDeltaSec.isNaN() && !timeDeltaSec.isInfinite()) {
-                    (ulDelta / timeDeltaSec).toLong()
-                } else {
-                    ulDelta
-                }
-
-                _downloadSpeedFlow.value = dlSpeed
-                _uploadSpeedFlow.value = ulSpeed
-
-                val todayString = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-                if (lastProcessedDate.isNotEmpty() && lastProcessedDate != todayString) {
-                    // Midnight transition! Reset local parameters to start clean
-                    cachedTodayEntity = null
-                    serviceScope.launch {
-                        preferencesManager.resetTodayOffsets()
-                        preferencesManager.saveAddOnSavedToday(0L, todayString)
-                    }
-                }
-                lastProcessedDate = todayString
-
-                startDbTrackingForDate(todayString)
-
-                val isAddOn = cachedIsAddOnActive
-                val networkStatsHelper = NetworkStatsHelper(this@SpeedMeterService)
-
-                // Ensure a row for today exists in Room database without overwriting existing data (Using IGNORE schema)
-                try {
-                    val initialEntity = DataUsageEntity(
-                        date = todayString,
-                        mobileDataUsed = 0L,
-                        wifiDataUsed = 0L,
-                        addOnDataUsed = 0L
-                    )
-                    repository.insertDataIgnore(initialEntity)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-
-                // Pre-fetch today's record synchronously to bypass async Flow collection lag on cold start
-                var currentTodayEntity = cachedTodayEntity
-                if (currentTodayEntity == null) {
-                    try {
-                        currentTodayEntity = repository.getDataByDate(todayString).first()
-                        if (currentTodayEntity != null) {
-                            cachedTodayEntity = currentTodayEntity
-                        }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-                }
-
-                var mobileUsed = 0L
-                var wifiUsed = 0L
-
-                try {
-                    if (networkStatsHelper.isPermissionGranted()) {
-                        val rawMobile = networkStatsHelper.getMobileBytesSinceMidnight()
-                        val rawWifi = networkStatsHelper.getWifiBytesSinceMidnight() + networkStatsHelper.getEthernetBytesSinceMidnight()
-
-                        // TODAY Reset Offset Subtraction
-                        val offsetDate = cachedTodayOffsetDate
-                        val mobileOffset = if (offsetDate == todayString) cachedTodayMobileOffset else 0L
-                        val wifiOffset = if (offsetDate == todayString) cachedTodayWifiOffset else 0L
-
-                        val rawMobileAdjusted = maxOf(0L, rawMobile - mobileOffset)
-                        val rawWifiAdjusted = maxOf(0L, rawWifi - wifiOffset)
-
-                        var baseline = cachedAddOnBaseline
-                        if (isAddOn && baseline <= 0L) {
-                            preferencesManager.saveAddOnBaseline(rawMobile)
-                            baseline = rawMobile
-                        }
-
-                        val savedTodayDate = cachedAddOnSavedTodayDate
-                        val savedTodayBytes = if (savedTodayDate == todayString) {
-                            cachedAddOnSavedToday
-                        } else {
-                            0L
-                        }
-
-                        val activationDate = cachedAddOnActivationDate
-                        val mobileBytes: Long
-                        val addOnBytes: Long
-
-                        if (isAddOn) {
-                            if (todayString == activationDate || activationDate.isEmpty()) {
-                                val baselineAdjusted = maxOf(0L, baseline - mobileOffset)
-                                val currentSessionAddOn = maxOf(0L, rawMobileAdjusted - baselineAdjusted)
-                                addOnBytes = savedTodayBytes + currentSessionAddOn
-                                mobileBytes = maxOf(0L, rawMobileAdjusted - addOnBytes)
-                            } else {
-                                addOnBytes = savedTodayBytes + rawMobileAdjusted
-                                mobileBytes = 0L
-                            }
-                        } else {
-                            addOnBytes = savedTodayBytes
-                            mobileBytes = maxOf(0L, rawMobileAdjusted - addOnBytes)
-                        }
-
-                        mobileUsed = mobileBytes
-                        wifiUsed = rawWifiAdjusted
-
-                        // Save or update today's entity in Room (Primary Key 'date' automatically merges or updates it)
-                        val updated = DataUsageEntity(
-                            date = todayString,
-                            mobileDataUsed = mobileBytes,
-                            wifiDataUsed = rawWifiAdjusted,
-                            addOnDataUsed = addOnBytes
-                        )
-                        repository.insertData(updated)
-                    } else {
-                        // --- FALLBACK INTERACTIVE TRAFFIC GENERATION ENGINE ---
-                        val existing = currentTodayEntity ?: (cachedTodayEntity?.takeIf { it.date == todayString })
-
-                        var mobileBytes = existing?.mobileDataUsed ?: 0L
-                        var wifiBytes = existing?.wifiDataUsed ?: 0L
-                        var addOnBytes = existing?.addOnDataUsed ?: 0L
-
-                        val totalDelta = dlDelta + ulDelta
-                        if (totalDelta > 0) {
-                            val networkType = getActiveNetworkType()
-                            if (networkType == "WIFI") {
-                                wifiBytes += totalDelta
-                            } else if (networkType == "MOBILE") {
-                                if (isAddOn) {
-                                    addOnBytes += totalDelta
-                                } else {
-                                    mobileBytes += totalDelta
-                                }
-                            }
-                        }
-
-                        mobileUsed = mobileBytes
-                        wifiUsed = wifiBytes
-
-                        val updated = DataUsageEntity(
-                            date = todayString,
-                            mobileDataUsed = mobileBytes,
-                            wifiDataUsed = wifiBytes,
-                            addOnDataUsed = addOnBytes
-                        )
-                        repository.insertData(updated)
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    // If DB insert fails, fallback to existing or 0L but don't crash
-                    val existing = currentTodayEntity ?: cachedTodayEntity
-                    mobileUsed = existing?.mobileDataUsed ?: 0L
-                    wifiUsed = existing?.wifiDataUsed ?: 0L
-                }
-
-                // Live-update notification
-                val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                val updatedNotification = buildSpeedNotification(dlSpeed, ulSpeed, mobileUsed, wifiUsed)
-                try {
-                    notificationManager.notify(NOTIFICATION_ID, updatedNotification)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-
-                // Note: Background notifications alerts are disabled per user request in favor of real-time on-screen popups
-            }
+    private fun buildSpeedNotification(dlBytes: Long, ulBytes: Long): Notification {
+        val networkLabel = when (_networkTypeFlow.value) {
+            NETWORK_WIFI -> "Wi-Fi"
+            NETWORK_MOBILE -> "Mobile"
+            else -> "Offline"
         }
-    }
-
-    private suspend fun checkDataAlerts() {
-        val todayString = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-        if (lastTrackingDate != todayString) {
-            lastTrackingDate = todayString
-            alertedMobile50 = false
-            alertedMobile90 = false
-            alertedMobile100 = false
-            alertedAddon50 = false
-            alertedAddon90 = false
-            alertedAddon100 = false
-        }
-
-        val mobileLimit = cachedMobileLimit
-        val mobileLimitUnit = cachedMobileLimitUnit
-        val addonLimit = cachedAddonLimit
-        val addonLimitUnit = cachedAddonLimitUnit
-
-        val todayEntity = cachedTodayEntity
-        if (todayEntity != null) {
-            val mobileUsed = todayEntity.mobileDataUsed
-            val addonUsed = todayEntity.addOnDataUsed
-
-            val mobileLimitBytes = convertToBytes(mobileLimit, mobileLimitUnit)
-            val addonLimitBytes = convertToBytes(addonLimit, addonLimitUnit)
-
-            // Mobile limit triggers
-            if (mobileLimitBytes > 0) {
-                val mobilePercent = (mobileUsed.toDouble() / mobileLimitBytes.toDouble()) * 100.0
-                if (mobilePercent >= 100.0) {
-                    if (!alertedMobile100) {
-                        alertedMobile100 = true
-                        sendAlertNotification(
-                            title = "Mobile Data Limit Reached",
-                            text = "Data Limit Reached! You have used 100% of your allocated Mobile data.",
-                            id = 3001,
-                            isHighPriority = true
-                        )
-                    }
-                } else if (mobilePercent >= 90.0) {
-                    if (!alertedMobile90) {
-                        alertedMobile90 = true
-                        sendAlertNotification(
-                            title = "Mobile Data Warning",
-                            text = "You have used 90% of your allocated Mobile data.",
-                            id = 3002,
-                            isHighPriority = false
-                        )
-                    }
-                } else if (mobilePercent >= 50.0) {
-                    if (!alertedMobile50) {
-                        alertedMobile50 = true
-                        sendAlertNotification(
-                            title = "Mobile Data Alert",
-                            text = "You have used 50% of your allocated Mobile data.",
-                            id = 3003,
-                            isHighPriority = false
-                        )
-                    }
-                }
-            }
-
-            // Add-On limit triggers
-            if (addonLimitBytes > 0) {
-                val addonPercent = (addonUsed.toDouble() / addonLimitBytes.toDouble()) * 100.0
-                if (addonPercent >= 100.0) {
-                    if (!alertedAddon100) {
-                        alertedAddon100 = true
-                        sendAlertNotification(
-                            title = "Add-On Limit Reached",
-                            text = "Data Limit Reached! You have used 100% of your allocated Add-On data.",
-                            id = 3004,
-                            isHighPriority = true
-                        )
-                    }
-                } else if (addonPercent >= 90.0) {
-                    if (!alertedAddon90) {
-                        alertedAddon90 = true
-                        sendAlertNotification(
-                            title = "Add-On Data Warning",
-                            text = "You have used 90% of your allocated Add-On data.",
-                            id = 3005,
-                            isHighPriority = false
-                        )
-                    }
-                } else if (addonPercent >= 50.0) {
-                    if (!alertedAddon50) {
-                        alertedAddon50 = true
-                        sendAlertNotification(
-                            title = "Add-On Data Alert",
-                            text = "You have used 50% of your allocated Add-On data.",
-                            id = 3006,
-                            isHighPriority = false
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    private fun sendAlertNotification(title: String, text: String, id: Int, isHighPriority: Boolean) {
-        val channelId = if (isHighPriority) ALERTS_CHANNEL_ID else CHANNEL_ID
-        val priority = if (isHighPriority) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT
-        
-        val builder = NotificationCompat.Builder(this, channelId)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setSmallIcon(R.drawable.ic_network_icon)
-            .setOngoing(false)
-            .setAutoCancel(true)
-            .setPriority(priority)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
-        
-        if (isHighPriority) {
-            builder.setDefaults(Notification.DEFAULT_ALL)
-        }
-
-        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.notify(id, builder.build())
-    }
-
-    private fun convertToBytes(limit: Double, unit: String): Long {
-        val factor = if (unit.uppercase(Locale.ROOT) == "GB") {
-            1024L * 1024L * 1024L
-        } else {
-            1024L * 1024L
-        }
-        return (limit * factor).toLong()
-    }
-
-    private fun createSpeedIcon(downloadSpeed: Long): IconCompat? {
-        if (!useBitmapIcon) return null
-        return try {
-            val kb = downloadSpeed / 1024.0
-            val text: String
-            val unit: String
-            if (kb >= 1024.0 * 1024.0) {
-                val gb = kb / (1024.0 * 1024.0)
-                text = String.format(Locale.US, "%.1f", gb)
-                unit = "gb/s"
-            } else if (kb >= 1024.0) {
-                val mb = kb / 1024.0
-                text = if (mb >= 10.0) {
-                    String.format(Locale.US, "%.0f", mb)
-                } else {
-                    String.format(Locale.US, "%.1f", mb)
-                }
-                unit = "mb/s"
-            } else {
-                text = kb.toInt().toString()
-                unit = "kb/s"
-            }
-
-            // High-efficiency caching: skip bitmap recreation if speed string and unit has not changed
-            if (text == lastSpeedText && unit == lastSpeedUnit && cachedSpeedIcon != null) {
-                return cachedSpeedIcon
-            }
-
-            // Use full standard unit labels (kb/s, mb/s, gb/s)
-            val displayUnit = unit
-
-            val width = 144
-            val height = 144
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
-            val paint = Paint().apply {
-                color = Color.WHITE
-                isAntiAlias = true
-                textAlign = Paint.Align.CENTER
-                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            }
-
-            // High-precision dynamic size adjustment (original scaled beautifully by 1.5x)
-            val numTextSize = when (text.length) {
-                1 -> 102f
-                2 -> 87f
-                3 -> 66f
-                else -> 54f
-            }
-            paint.textSize = numTextSize
-            // Draw digits beautifully balanced in upper section of the 144px canvas
-            canvas.drawText(text, width / 2f, 75f, paint)
-
-            // Draw full unit (kb/s, mb/s, gb/s) 1.5x larger in lower section
-            paint.textSize = 51f
-            canvas.drawText(displayUnit, width / 2f, 130f, paint)
-
-            val icon = IconCompat.createWithBitmap(bitmap)
-            cachedSpeedIcon = icon
-            lastSpeedText = text
-            lastSpeedUnit = unit
-            icon
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
-        }
-    }
-
-    private fun formatBytesForNotification(bytes: Long): String {
-        val mb = bytes / (1024.0 * 1024.0)
-        return if (mb >= 1024.0) {
-            String.format(Locale.US, "%.2f GB", mb / 1024.0)
-        } else {
-            String.format(Locale.US, "%.1f MB", mb)
-        }
-    }
-
-    private fun buildSpeedNotification(dlBytes: Long, ulBytes: Long, mobileUsedBytes: Long, wifiUsedBytes: Long): Notification {
-        val dlFormatted = formatSpeed(dlBytes)
-        val ulFormatted = formatSpeed(ulBytes)
-        val mobileFormatted = formatBytesForNotification(mobileUsedBytes)
-        val wifiFormatted = formatBytesForNotification(wifiUsedBytes)
+        val todayTotal = _todayUsageFlow.value.total
+        val title = "↓ ${SpeedFormatter.format(dlBytes)}  ↑ ${SpeedFormatter.format(ulBytes)}"
+        val text = "$networkLabel · Today ${BytesFormatter.format(todayTotal)}"
 
         return try {
             val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("Down: $dlFormatted | Up: $ulFormatted")
-                .setContentText("Mobile: $mobileFormatted | WiFi: $wifiFormatted")
+                .setContentTitle(title)
+                .setContentText(text)
                 .setOngoing(true)
                 .setCategory(NotificationCompat.CATEGORY_SERVICE)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setContentIntent(openAppIntent())
 
             val speedIcon = createSpeedIcon(dlBytes)
             if (speedIcon != null) {
@@ -683,57 +538,73 @@ class SpeedMeterService : Service() {
             builder.build()
         } catch (e: Exception) {
             e.printStackTrace()
-            // Ultimate fallback with extremely basic safe properties to prevent crash on any android device/ROM
             try {
                 NotificationCompat.Builder(this, CHANNEL_ID)
-                    .setContentTitle("Down: $dlFormatted | Up: $ulFormatted")
-                    .setContentText("Mobile: $mobileFormatted | WiFi: $wifiFormatted")
+                    .setContentTitle(title)
+                    .setContentText(text)
                     .setOngoing(true)
-                    .setCategory(NotificationCompat.CATEGORY_SERVICE)
                     .setPriority(NotificationCompat.PRIORITY_LOW)
                     .setSmallIcon(R.drawable.ic_network_icon)
                     .build()
             } catch (ex: Exception) {
-                ex.printStackTrace()
-                // Return dummy basic notification if everything else throws
                 NotificationCompat.Builder(this, CHANNEL_ID).build()
             }
         }
     }
 
-    private fun createNotificationChannels() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-            // Channel 1: Live Ticker
-            val name = "Speed Monitor Service"
-            val descriptionText = "Displays real-time Internet speeds in the status bar."
-            val importance = NotificationManager.IMPORTANCE_LOW
-            val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
-                description = descriptionText
-                setShowBadge(false)
-            }
-            notificationManager.createNotificationChannel(channel)
-
-            // Channel 2: High Priority Warnings & Alerts
-            val alertName = "Data Limit Alerts"
-            val alertDesc = "Dispatches warnings and alerts when data usage limits are reached."
-            val alertChannel = NotificationChannel(ALERTS_CHANNEL_ID, alertName, NotificationManager.IMPORTANCE_HIGH).apply {
-                description = alertDesc
-                enableVibration(true)
-                enableLights(true)
-                setShowBadge(true)
-            }
-            notificationManager.createNotificationChannel(alertChannel)
+    private fun openAppIntent(): PendingIntent {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
+        return PendingIntent.getActivity(
+            this,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
     }
 
-    private fun formatSpeed(bytesPerSec: Long): String {
-        val kb = bytesPerSec / 1024.0
-        return if (kb >= 1024.0) {
-            String.format("%.1f MB/s", kb / 1024.0)
-        } else {
-            String.format("%.1f KB/s", kb)
+    /**
+     * Custom status-bar icon: the live download speed as text (the signature look
+     * of dedicated speed-meter apps). Bitmap is only redrawn when the string
+     * changes, so the 1 Hz loop stays cheap.
+     */
+    private fun createSpeedIcon(downloadSpeed: Long): IconCompat? {
+        return try {
+            val (text, unit) = SpeedFormatter.split(downloadSpeed)
+            if (text == lastSpeedText && unit == lastSpeedUnit && cachedSpeedIcon != null) {
+                return cachedSpeedIcon
+            }
+
+            val width = 144
+            val height = 144
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            val paint = Paint().apply {
+                color = Color.WHITE
+                isAntiAlias = true
+                textAlign = Paint.Align.CENTER
+                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+            }
+
+            paint.textSize = when (text.length) {
+                1 -> 102f
+                2 -> 87f
+                3 -> 66f
+                else -> 54f
+            }
+            canvas.drawText(text, width / 2f, 75f, paint)
+            paint.textSize = 51f
+            canvas.drawText(unit, width / 2f, 130f, paint)
+
+            val icon = IconCompat.createWithBitmap(bitmap)
+            cachedSpeedIcon = icon
+            lastSpeedText = text
+            lastSpeedUnit = unit
+            icon
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
         }
     }
 }

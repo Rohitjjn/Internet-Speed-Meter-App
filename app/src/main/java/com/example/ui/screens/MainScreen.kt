@@ -1,42 +1,49 @@
 package com.example.ui.screens
 
+import android.content.Context
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Speed
-import androidx.compose.material3.Icon
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.Button
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,17 +53,23 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.R
 import com.example.data.AppDatabase
 import com.example.data.DataUsageRepository
 import com.example.data.PreferencesManager
-import com.example.ui.theme.borderColor
+import com.example.services.ServiceScheduler
+import com.example.ui.components.AppIcon
+import com.example.ui.theme.glassBorder
+import com.example.ui.theme.glassColor
+import com.example.ui.util.secondary
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 sealed class Screen(val route: String, val title: String) {
-    object Dashboard : Screen("dashboard", "Dashboard")
+    object Dashboard : Screen("dashboard", "Speed")
     object History : Screen("history", "History")
     object Settings : Screen("settings", "Settings")
 }
@@ -73,38 +86,36 @@ fun MainScreen() {
     val preferencesManager = remember { PreferencesManager(context) }
     val scope = rememberCoroutineScope()
 
-    var todayString by remember { mutableStateOf(SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())) }
-    androidx.compose.runtime.LaunchedEffect(Unit) {
+    // Keep the meter alive (Android 14/15 background-start restictions).
+    LaunchedEffect(Unit) {
+        ServiceScheduler.schedule(context)
+    }
+
+    // Track "today" so midnight rollovers refresh the alert logic.
+    var todayString by remember {
+        mutableStateOf(SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date()))
+    }
+    LaunchedEffect(Unit) {
         while (true) {
-            kotlinx.coroutines.delay(5000)
+            delay(5000)
             todayString = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
         }
     }
+
     val todayEntity by repository.getDataByDate(todayString).collectAsState(initial = null)
 
-    val mobileLimit by preferencesManager.mobileLimitFlow.collectAsState(initial = 2.0)
+    val mobileLimit by preferencesManager.mobileLimitFlow.collectAsState(initial = 0.0)
     val mobileLimitUnit by preferencesManager.mobileLimitUnitFlow.collectAsState(initial = "GB")
-    val addonLimit by preferencesManager.addonLimitFlow.collectAsState(initial = 500.0)
-    val addonLimitUnit by preferencesManager.addonLimitUnitFlow.collectAsState(initial = "MB")
-    val isAddOnActive by preferencesManager.isAddOnActiveFlow.collectAsState(initial = false)
-
     val lastDismissedMobileAlert by preferencesManager.lastDismissedMobileAlertFlow.collectAsState(initial = 0L)
-    val lastDismissedAddonAlert by preferencesManager.lastDismissedAddonAlertFlow.collectAsState(initial = 0L)
     val lastDismissedAlertDate by preferencesManager.lastDismissedAlertDateFlow.collectAsState(initial = "")
 
     val effectiveDismissedMobile = if (lastDismissedAlertDate == todayString) lastDismissedMobileAlert else 0L
-    val effectiveDismissedAddon = if (lastDismissedAlertDate == todayString) lastDismissedAddonAlert else 0L
+    val mobileUsed = todayEntity?.mobileTotal ?: 0L
 
-    val mobileUsed = todayEntity?.mobileDataUsed ?: 0L
-    val addonUsed = todayEntity?.addOnDataUsed ?: 0L
-
-    val factorMobile = if (mobileLimitUnit.uppercase(Locale.ROOT) == "GB") 1024L * 1024L * 1024L else 1024L * 1024L
+    val factorMobile =
+        if (mobileLimitUnit.uppercase(Locale.ROOT) == "GB") 1024L * 1024L * 1024L else 1024L * 1024L
     val mobileLimitBytes = (mobileLimit * factorMobile).toLong()
 
-    val factorAddon = if (addonLimitUnit.uppercase(Locale.ROOT) == "GB") 1024L * 1024L * 1024L else 1024L * 1024L
-    val addonLimitBytes = (addonLimit * factorAddon).toLong()
-
-    // Determine pending Mobile alerts
     var pendingMobileAlert: Long? = null
     if (mobileLimitBytes > 0) {
         val pct = (mobileUsed.toDouble() / mobileLimitBytes.toDouble()) * 100.0
@@ -119,176 +130,66 @@ fun MainScreen() {
         }
     }
 
-    // Determine pending AddOn alerts
-    var pendingAddonAlert: Long? = null
-    if (addonLimitBytes > 0 && isAddOnActive) {
-        val pct = (addonUsed.toDouble() / addonLimitBytes.toDouble()) * 100.0
-        val targetAlertLevel = when {
-            pct >= 100.0 -> 100L
-            pct >= 90.0 -> 90L
-            pct >= 50.0 -> 50L
-            else -> 0L
-        }
-        if (targetAlertLevel > effectiveDismissedAddon) {
-            pendingAddonAlert = targetAlertLevel
-        }
-    }
-
     if (pendingMobileAlert != null) {
         AlertDialog(
-            onDismissRequest = { /* Non-dismissible */ },
+            onDismissRequest = { /* Non-dismissible: user must acknowledge */ },
             properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
             title = {
                 Text(
-                    text = if (pendingMobileAlert >= 100L) "Daily Mobile Limit Exceeded!" else "Daily Mobile Data Warning",
+                    text = if (pendingMobileAlert >= 100L) "Daily Mobile Limit Reached!" else "Mobile Data Warning",
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.error
                 )
             },
             text = {
                 Text(
-                    text = "Alert: You have crossed ${pendingMobileAlert}% of your daily mobile data limit!\n\n" +
-                           "Current usage: ${formatBytesWarning(mobileUsed)} of ${mobileLimit} ${mobileLimitUnit}."
+                    text = "You have used ${pendingMobileAlert}% of your daily mobile data limit.\n\n" +
+                        "Used: ${formatBytesWarning(mobileUsed)} of ${mobileLimit} ${mobileLimitUnit}.",
+                    color = secondary()
                 )
             },
             confirmButton = {
                 Button(
                     onClick = {
                         scope.launch {
-                            preferencesManager.saveDismissedAlerts(
-                                mobileLevel = pendingMobileAlert,
-                                addonLevel = effectiveDismissedAddon,
-                                date = todayString
-                            )
+                            preferencesManager.saveDismissedMobileAlert(pendingMobileAlert, todayString)
                         }
-                    }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
                 ) {
                     Text("OK")
                 }
-            }
-        )
-    } else if (pendingAddonAlert != null) {
-        AlertDialog(
-            onDismissRequest = { /* Non-dismissible */ },
-            properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
-            title = {
-                Text(
-                    text = if (pendingAddonAlert >= 100L) "Add-On Limit Exceeded!" else "Add-On Custom Data Warning",
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.error
-                )
             },
-            text = {
-                Text(
-                    text = "Alert: You have crossed ${pendingAddonAlert}% of your custom add-on data limit!\n\n" +
-                           "Current usage: ${formatBytesWarning(addonUsed)} of ${addonLimit} ${addonLimitUnit}."
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        scope.launch {
-                            preferencesManager.saveDismissedAlerts(
-                                mobileLevel = effectiveDismissedMobile,
-                                addonLevel = pendingAddonAlert,
-                                date = todayString
-                            )
-                        }
-                    }
-                ) {
-                    Text("OK")
-                }
-            }
+            shape = RoundedCornerShape(24.dp),
+            containerColor = MaterialTheme.colorScheme.surface
         )
     }
-
-    val topBorderColor = MaterialTheme.borderColor
 
     Scaffold(
         modifier = Modifier
             .fillMaxSize()
             .testTag("main_screen_scaffold"),
-        contentWindowInsets = WindowInsets(0, 0, 0, 0), // Full bleed content under navbar
+        contentWindowInsets = WindowInsets(0, 0, 0, 0), // full-bleed, glass nav floats above insets
         bottomBar = {
-            // Elegant glassy/translucent bottom bar container
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f))
-                    .drawBehind {
-                        // Sharp high-end technical borderline on top of navigation
-                        drawLine(
-                            color = topBorderColor,
-                            start = Offset(0f, 0f),
-                            end = Offset(size.width, 0f),
-                            strokeWidth = 1.dp.toPx()
-                        )
-                    }
-                    .windowInsetsPadding(WindowInsets.navigationBars)
-                    .testTag("glassy_bottom_nav_container")
-            ) {
-                NavigationBar(
-                    containerColor = Color.Transparent, // Guided by container Box background
-                    tonalElevation = 0.dp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("bottom_nav_bar")
-                ) {
-                    val items = listOf(
-                        Triple(Screen.Dashboard, Icons.Filled.Speed, Icons.Outlined.Speed),
-                        Triple(Screen.History, Icons.Filled.History, Icons.Outlined.History),
-                        Triple(Screen.Settings, Icons.Filled.Settings, Icons.Outlined.Settings)
-                    )
-
-                    items.forEach { (screen, selectedIcon, unselectedIcon) ->
-                        val isSelected = currentRoute == screen.route
-                        NavigationBarItem(
-                            selected = isSelected,
-                            onClick = {
-                                if (currentRoute != screen.route) {
-                                    navController.navigate(screen.route) {
-                                        // Pop up to the start destination of the graph to
-                                        // avoid building up a large stack of destinations
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            saveState = true
-                                        }
-                                        // Avoid multiple copies of the same destination when
-                                        // reselecting the same item
-                                        launchSingleTop = true
-                                        // Restore state when reselecting a previously selected item
-                                        restoreState = true
-                                    }
-                                }
-                            },
-                            icon = {
-                                Icon(
-                                    imageVector = if (isSelected) selectedIcon else unselectedIcon,
-                                    contentDescription = screen.title,
-                                    modifier = Modifier.testTag("nav_icon_${screen.route}")
-                                )
-                            },
-                            label = {
-                                Text(
-                                    text = screen.title,
-                                    fontSize = 11.sp,
-                                    modifier = Modifier.testTag("nav_label_${screen.route}")
-                                )
-                            },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = MaterialTheme.colorScheme.onPrimary,
-                                unselectedIconColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                                selectedTextColor = MaterialTheme.colorScheme.primary,
-                                unselectedTextColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                                indicatorColor = MaterialTheme.colorScheme.primary // Clean minimal pill color
-                            ),
-                            modifier = Modifier.testTag("nav_item_${screen.route}")
-                        )
+            FloatingGlassNavBar(
+                currentRoute = currentRoute,
+                onNavigate = { screen ->
+                    if (currentRoute != screen.route) {
+                        navController.navigate(screen.route) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
                     }
                 }
-            }
+            )
         }
     ) { innerPadding ->
-        // Render current screen inside Scaffold content, with bottom safe padding matching the bottom bar
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -300,14 +201,99 @@ fun MainScreen() {
                 startDestination = Screen.Dashboard.route,
                 modifier = Modifier.fillMaxSize()
             ) {
-                composable(Screen.Dashboard.route) {
-                    DashboardScreen()
-                }
-                composable(Screen.History.route) {
-                    HistoryScreen()
-                }
-                composable(Screen.Settings.route) {
-                    SettingsScreen()
+                composable(Screen.Dashboard.route) { DashboardScreen() }
+                composable(Screen.History.route) { HistoryScreen() }
+                composable(Screen.Settings.route) { SettingsScreen() }
+            }
+        }
+    }
+}
+
+/**
+ * Premium floating "pill" navigation: a frosted-glass bar hovering above the
+ * home indicator, selected item highlighted with an ink pill.
+ */
+@Composable
+private fun FloatingGlassNavBar(
+    currentRoute: String?,
+    onNavigate: (Screen) -> Unit
+) {
+    val items = listOf(
+        Triple(Screen.Dashboard, R.drawable.ic_speed, "Speed"),
+        Triple(Screen.History, R.drawable.ic_history, "History"),
+        Triple(Screen.Settings, R.drawable.ic_settings, "Settings")
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .windowInsetsPadding(WindowInsets.navigationBars)
+            .padding(start = 20.dp, end = 20.dp, bottom = 14.dp, top = 8.dp)
+            .testTag("glassy_bottom_nav_container")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .shadow(
+                    elevation = 16.dp,
+                    shape = RoundedCornerShape(32.dp),
+                    ambientColor = Color.Black.copy(alpha = 0.10f),
+                    spotColor = Color.Black.copy(alpha = 0.12f)
+                )
+                .clip(RoundedCornerShape(32.dp))
+                .background(glassColor)
+                .border(1.dp, glassBorder, RoundedCornerShape(32.dp))
+                .padding(6.dp)
+                .testTag("bottom_nav_bar"),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            items.forEach { (screen, iconRes, label) ->
+                val isSelected = currentRoute == screen.route
+                val pillWidth by animateDpAsState(
+                    targetValue = if (isSelected) 72.dp else 56.dp,
+                    animationSpec = tween(durationMillis = 260),
+                    label = "nav_pill_${screen.route}"
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(pillWidth)
+                            .height(46.dp)
+                            .clip(RoundedCornerShape(26.dp))
+                            .background(
+                                if (isSelected) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    Color.Transparent
+                                }
+                            )
+                            .clickable { onNavigate(screen) }
+                            .testTag("nav_item_${screen.route}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            AppIcon(
+                                resId = iconRes,
+                                contentDescription = label,
+                                tint = if (isSelected) MaterialTheme.colorScheme.onPrimary
+                                else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+                                modifier = Modifier.size(19.dp)
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = label,
+                                fontSize = 10.sp,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimary
+                                else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+                                modifier = Modifier.testTag("nav_label_${screen.route}")
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -322,4 +308,3 @@ private fun formatBytesWarning(bytes: Long): String {
         String.format(Locale.getDefault(), "%.1f MB", mb)
     }
 }
-

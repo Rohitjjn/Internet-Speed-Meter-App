@@ -6,27 +6,21 @@ class DataUsageRepository(private val dataUsageDao: DataUsageDao) {
 
     val allHistory: Flow<List<DataUsageEntity>> = dataUsageDao.getAllHistory()
 
-    suspend fun insertData(data: DataUsageEntity) {
-        dataUsageDao.insertData(data)
+    suspend fun upsertData(data: DataUsageEntity) {
+        dataUsageDao.upsertData(data)
     }
 
-    suspend fun insertDataIgnore(data: DataUsageEntity) {
-        dataUsageDao.insertDataIgnore(data)
+    fun getDataByDate(date: String): Flow<DataUsageEntity?> = dataUsageDao.getDataByDate(date)
+
+    suspend fun getByDate(date: String): DataUsageEntity? = dataUsageDao.getByDate(date)
+
+    fun getThisMonthTotal(monthPrefix: String): Flow<Long> = dataUsageDao.getThisMonthTotal(monthPrefix)
+
+    suspend fun deleteByDate(date: String) {
+        dataUsageDao.deleteByDate(date)
     }
 
-    fun getDataByDate(date: String): Flow<DataUsageEntity?> {
-        return dataUsageDao.getDataByDate(date)
-    }
-
-    fun getThisMonthTotal(monthPrefix: String): Flow<Long?> {
-        return dataUsageDao.getThisMonthTotal(monthPrefix)
-    }
-
-    suspend fun deleteTodayData(date: String) {
-        dataUsageDao.deleteTodayData(date)
-    }
-
-    suspend fun clearAllHistory() {
-        dataUsageDao.clearAllHistory()
+    suspend fun clearAll() {
+        dataUsageDao.clearAll()
     }
 }
