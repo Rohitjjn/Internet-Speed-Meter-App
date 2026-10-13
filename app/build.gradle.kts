@@ -86,6 +86,8 @@ dependencies {
   testImplementation(libs.kotlinx.coroutines.test)
   testImplementation(libs.robolectric)
 
+  // The instrumented smoke test drives the (suspend) measurement API directly.
+  androidTestImplementation(libs.kotlinx.coroutines.core)
   androidTestImplementation(platform(libs.androidx.compose.bom))
   androidTestImplementation(libs.androidx.compose.ui.test.junit4)
   androidTestImplementation(libs.androidx.espresso.core)

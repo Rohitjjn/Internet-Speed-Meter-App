@@ -3,6 +3,8 @@ package com.example.services
 import android.content.Context
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.CoroutineWorker
@@ -37,6 +39,10 @@ class SpeedKeepAliveWorker(
 object ServiceScheduler {
 
     private const val KEEP_ALIVE_WORK = "speed_meter_keep_alive"
+    private const val RETRY_WORK = "speed_meter_timeout_retry"
+
+    /** Default delay before the watchdog is allowed to try again after a timeout storm. */
+    private const val RETRY_DELAY_MINUTES = 30L
 
     fun schedule(context: Context) {
         try {
@@ -46,6 +52,28 @@ object ServiceScheduler {
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 KEEP_ALIVE_WORK,
                 ExistingPeriodicWorkPolicy.KEEP,
+                request
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /**
+     * Called when the service hit the Android 15+ `dataSync` budget and its inline restart
+     * attempts were exhausted: instead of a tight restart loop, the watchdog worker is
+     * scheduled for later. WorkManager starts the FGS from a different (allowed) path and
+     * the meter comes back once the budget window rolls over.
+     */
+    fun scheduleRetry(context: Context, delayMinutes: Long = RETRY_DELAY_MINUTES) {
+        try {
+            val request = OneTimeWorkRequestBuilder<SpeedKeepAliveWorker>()
+                .setInitialDelay(delayMinutes, TimeUnit.MINUTES)
+                .setConstraints(Constraints.Builder().build())
+                .build()
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                RETRY_WORK,
+                ExistingWorkPolicy.REPLACE,
                 request
             )
         } catch (e: Exception) {

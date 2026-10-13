@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -107,6 +108,12 @@ fun DashboardScreen(
     ) {
         AppBackground()
 
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        // A single column is right for a phone; from 600 dp (tablets, landscape,
+        // foldables) the live card and the daily cards sit side by side like a native
+        // dashboard instead of stretching to a 1000 dp wide column.
+        val twoColumn = maxWidth >= 600.dp
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -153,39 +160,89 @@ fun DashboardScreen(
                 }
             }
 
-            // ---------------- Hero: live speed ----------------
-            HeroSpeedCard()
+            if (twoColumn) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // ---------------- Hero: live speed ----------------
+                        HeroSpeedCard()
 
-            // ---------------- Permission hint ----------------
-            if (!permissionGranted) {
-                UsageAccessHintCard()
-            }
+                        // ---------------- Permission hint ----------------
+                        if (!permissionGranted) {
+                            UsageAccessHintCard()
+                        }
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // ---------------- Mobile / WiFi cards ----------------
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            UsageCard(
+                                title = "Mobile Data",
+                                iconRes = R.drawable.ic_cellular,
+                                data = mobileUsage,
+                                modifier = Modifier.weight(1f).testTag("mobile_data_card")
+                            )
+                            UsageCard(
+                                title = "Wi-Fi",
+                                iconRes = R.drawable.ic_wifi,
+                                data = wifiUsage,
+                                modifier = Modifier.weight(1f).testTag("wifi_data_card")
+                            )
+                        }
 
-            // ---------------- Mobile / WiFi cards ----------------
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                UsageCard(
-                    title = "Mobile Data",
-                    iconRes = R.drawable.ic_cellular,
-                    data = mobileUsage,
-                    modifier = Modifier.weight(1f).testTag("mobile_data_card")
+                        // ---------------- Total card ----------------
+                        TotalCard(
+                            data = totalUsage,
+                            limitProgress = limitProgress,
+                            limitLabel = limitLabel,
+                            modifier = Modifier.testTag("total_data_card")
+                        )
+                    }
+                }
+            } else {
+                // ---------------- Hero: live speed ----------------
+                HeroSpeedCard()
+
+                // ---------------- Permission hint ----------------
+                if (!permissionGranted) {
+                    UsageAccessHintCard()
+                }
+
+                // ---------------- Mobile / WiFi cards ----------------
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    UsageCard(
+                        title = "Mobile Data",
+                        iconRes = R.drawable.ic_cellular,
+                        data = mobileUsage,
+                        modifier = Modifier.weight(1f).testTag("mobile_data_card")
+                    )
+                    UsageCard(
+                        title = "Wi-Fi",
+                        iconRes = R.drawable.ic_wifi,
+                        data = wifiUsage,
+                        modifier = Modifier.weight(1f).testTag("wifi_data_card")
+                    )
+                }
+
+                // ---------------- Total card ----------------
+                TotalCard(
+                    data = totalUsage,
+                    limitProgress = limitProgress,
+                    limitLabel = limitLabel,
+                    modifier = Modifier.testTag("total_data_card")
                 )
-                UsageCard(
-                    title = "Wi-Fi",
-                    iconRes = R.drawable.ic_wifi,
-                    data = wifiUsage,
-                    modifier = Modifier.weight(1f).testTag("wifi_data_card")
-                )
             }
-
-            // ---------------- Total card ----------------
-            TotalCard(
-                data = totalUsage,
-                limitProgress = limitProgress,
-                limitLabel = limitLabel,
-                modifier = Modifier.testTag("total_data_card")
-            )
 
             Spacer(modifier = Modifier.height(8.dp))
+        }
         }
 
         // ---------------- Reset confirmation dialog ----------------
@@ -446,11 +503,6 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
                     label = "THIS SESSION",
                     value = BytesFormatter.format(live.sessionBytes),
                     sub = sessionDurationLabel(live.sessionDurationMs)
-                )
-                LiveStat(
-                    label = "LAST WINDOW",
-                    value = "${live.windowMs} ms",
-                    sub = "${live.samplesTaken} samples"
                 )
             }
 

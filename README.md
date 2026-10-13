@@ -56,15 +56,23 @@ never tell you the *capacity* of your line. Dashboard → **Test → START TEST*
 for real over the network (plain `HttpURLConnection`, no third-party SDK):
 
 - **Latency + jitter** — 5 round trips after a throw-away warm-up request.
-- **Download** — 4 parallel streams from Cloudflare's public test endpoint for 8 s.
+- **Download** — 4 parallel streams from the selected endpoint for 8 s.
 - **Upload** — 3 parallel chunked POST streams for 6 s.
 - Result = `bits × 8 ÷ seconds`, shown in **Mbps** (the unit ISPs advertise), with the
   last 20 results kept on-device. The divisor is the window that *actually carried data*
-  (first byte → deadline) and the live gauge is fed measured intervals too, so TCP/TLS
-  setup and coroutine scheduling can never deflate or inflate the number.
+  (first byte → deadline) and the live needle/animation is fed measured intervals too, so
+  TCP/TLS setup and coroutine scheduling can never deflate or inflate the number.
+
+Three rules protect the user and the result:
+
+| Rule | Why |
+|---|---|
+| **Endpoint profiles with fallback** — `AUTO` uses `speed.cloudflare.com`, and retries on the LibreSpeed public backend when that host cannot answer the latency probe (corporate DNS, some ISPs). A custom `http(s)` host can be configured (Cloudflare- or LibreSpeed-style layout) | A blocked host must not make the feature dead — and the result card always names the host that produced the numbers |
+| **Metered-data confirmation** — on mobile data the app asks first with a real estimate (~`line speed × 8 s + 6 s`, floor 5 MB, +10 % overhead) | The test really transfers data; a silent 30 MB is not acceptable |
+| **Abort on network change** — the phases poll a cooperative abort signal, so a Wi-Fi → mobile switch stops the run in a fraction of a second | Otherwise the result would mix two connections *and* keep spending mobile data |
 
 The test runs **only** when you tap the button; it sends no identifiers and stores
-nothing but the four numbers you can see.
+nothing but the four numbers you can see. Results can be shared as plain text (no SDK).
 
 ### Daily usage ("Mobile today" / "Wi-Fi today")
 
@@ -82,18 +90,21 @@ read cadence, last window, session samples, and the kernel interface totals
 
 ### Background behaviour (Android 15/16)
 
-`dataSync` foreground services get a daily budget. When the system calls
-`onTimeout`, the service restarts itself to get a fresh budget and stops
-cleanly if the OS refuses. A 60-minute WorkManager watchdog
-(`SpeedKeepAliveWorker`) restarts the service if it was killed (e.g. after
-app update / device reboot — the boot receiver restarts it too).
+`dataSync` foreground services get a daily budget. When the system calls `onTimeout`, the
+restart is **delayed by 20 s** and allowed at most twice in a row; after that the service
+stops cleanly and a one-shot WorkManager retry (30 min) picks it up — a tight
+restart loop would only burn the remaining budget faster. A 60-minute WorkManager watchdog
+(`SpeedKeepAliveWorker`) restarts the service if it was killed (e.g. after an app update or
+a device reboot — the boot receiver restarts it too).
 
 ---
 
 ## Features
 
 - ⚡ Live ↓/↑ speed, measured twice a second, with digit-roll animation
-- 🧪 **Active speed test**: ping · jitter · download · upload (Mbps) + result history
+- 🧪 **Active speed test**: ping · jitter · download · upload (Mbps), instrument gauge with
+  needle + labelled scale, shareable text result, result history
+- 🌐 Endpoint choice with automatic fallback (Cloudflare → LibreSpeed) + custom host
 - 👥 Per-network split: real bytes attributed to Wi-Fi vs mobile while they happen
 - 📊 Session total, session peak, 1-minute average and 30-second sparkline
 - 📱 Mobile & Wi-Fi daily usage cards (real counters)
@@ -102,6 +113,8 @@ app update / device reboot — the boot receiver restarts it too).
   with a buzz; the app never blocks data
 - 🌗 Glassy light + dark theme (GPT-style glassmorphism) + accent picker
 - 🔔 Status-bar notification with live speed + custom speed glyph icon
+- 🌐 Hindi (`values-hi`) for the status-bar notification, network names and navigation —
+  the rest of the copy is still being extracted (see the next-loop prompt)
 - 🧾 Privacy: no `ACCESS_WIFI_STATE` / `READ_PHONE_STATE`; `INTERNET` exists **only**
   for the manual speed test, no analytics, no accounts, everything on-device
 
@@ -126,12 +139,20 @@ automatically on first sync.
 ./gradlew :app:testDebugUnitTest
 ```
 
-Covers the measurement core without a device: `SpeedEngineTest` (independent
-directions, measured windows, suspended-process guard, counter resets, per-transport
-attribution), `ExampleUnitTest` (formatters, bits/bytes modes, `/proc/net/dev` parser,
-jitter, result serialization), `AccountingTest` (reset baselines, clamping, midnight
-rollover), `HistoryDatabaseTest` (Room) and `DashboardUiSmokeTest` (Robolectric Compose
-render).
+Covers the measurement core without a device: `SpeedEngineTest` (independent directions,
+measured windows, suspended-process guard, counter resets, implausible-delta ceiling,
+per-transport attribution), `SourceHealthTest` (the flap-free source-switch rule),
+`TestServerTest` (endpoint URLs, fallback order, data-cost estimate), `ExampleUnitTest`
+(formatters, bits/bytes modes, `/proc/net/dev` parser, gauge scale, jitter, result
+serialization), `AccountingTest` (reset baselines, clamping, midnight rollover),
+`PreferencesManagerTest` (DataStore round-trips), `HistoryDatabaseTest` (Room) and
+`DashboardUiSmokeTest` (Robolectric Compose render).
+
+On a device (network-gated, skips without a connection):
+
+```bash
+./gradlew :app:connectedDebugAndroidTest   # runs SpeedTestEngineInstrumentedTest
+```
 
 ---
 
@@ -186,13 +207,17 @@ app/src/main/java/com/example/
 ├── services/
 │   ├── SpeedMeterService.kt   # 500 ms read loop + 15 s accounting + notification
 │   ├── SpeedEngine.kt         # pure measurement maths (unit-tested, no Android)
+│   ├── SourceHealth.kt        # pure source-switch rule (TrafficStats ⇄ /proc/net/dev)
 │   ├── TrafficCounterReader.kt# TrafficStats / /proc/net/dev + per-interface parser
-│   ├── SpeedTestEngine.kt     # active ping/download/upload measurement
-│   └── ServiceScheduler.kt    # WorkManager keep-alive + boot handling
+│   ├── SpeedTestEngine.kt     # active ping/download/upload measurement + abort signal
+│   ├── TestServer.kt          # endpoint profiles (Cloudflare/LibreSpeed/custom) + cost
+│   ├── NetworkMonitor.kt      # fresh transport read for the metered check/abort rule
+│   └── ServiceScheduler.kt    # WorkManager keep-alive, timeout retry + boot handling
 └── ui/
     ├── components/            # AppBackground, GlassCard, GlassChip, AppIcon
     ├── screens/               # Dashboard, Speed Test, History, Settings, Intro, Splash
     ├── theme/                 # glass palettes (light + dark), Material 3
+    ├── ../res/values-hi/      # Hindi notification, network names, navigation
     ├── util/                  # secondary()/dlColor()/ulColor()/toBytes()
     └── viewmodel/             # Dashboard / SpeedTest / History / Settings VMs
 ```

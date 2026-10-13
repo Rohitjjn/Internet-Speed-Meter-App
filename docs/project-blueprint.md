@@ -25,8 +25,13 @@ Material 3, no third-party SDKs, everything on-device.
 5. **Premium look** — glassy-white light theme (GPT-style glassmorphism: translucent
    cards, soft top highlight, ambient glow blobs) with a full dark variant, an accent
    picker, ink (inverse) accent cards, monospace numerals and animated digits.
-6. **Durable background** — `dataSync` FGS with `onTimeout` restart, 60-minute
-   WorkManager watchdog, boot receiver restart.
+6. **Durable background** — `dataSync` FGS; `onTimeout` restarts with a 20 s backoff at
+   most twice, then stops and hands over to a one-shot WorkManager retry (30 min);
+   60-minute watchdog; boot receiver restart.
+7. **Localizable surfaces first** — the always-visible notification, the network names and
+   the navigation are resource-backed (`values/`, `values-hi/`); the rest of the copy is
+   still Kotlin literals and is being extracted in a dedicated pass
+   (see `docs/next-loop-prompt.md`).
 
 ## Architecture
 
@@ -40,8 +45,9 @@ MainActivity (Splash → Intro → Main)
 
 SpeedMeterService (foreground, dataSync)
 ├── read loop — 500 ms, Dispatchers.Default
-│     TrafficCounterReader: TrafficStats  ⇄  /proc/net/dev   (per-source anchors +
-│     health probe; switch only when the other source is genuinely alive)
+│     TrafficCounterReader: TrafficStats  ⇄  /proc/net/dev
+│     SourceHealth (pure): stagnation/UNSUPPORTED → rate-limited probe → switch only
+│     when the other source is genuinely alive
 │     → SpeedEngine (pure maths) → LiveSpeed every ~1 s
 │     → StateFlows: raw dl/ul, steady (EWMA), 1-min average, peaks, history,
 │       session bytes, per-transport rates, transport
@@ -53,10 +59,15 @@ SpeedMeterService (foreground, dataSync)
       → Room upsert(daily_data_usage)
 
 SpeedTestEngine (opt-in, Dispatchers.IO)
+├── endpoint: TestServer profile — AUTO (Cloudflare → LibreSpeed fallback),
+│             explicit built-in host, or a custom http(s) URL (2 flavours)
+├── guard: TestDataCost estimate shown before a metered run (~speed × phase budgets)
+├── abort: TestAbortSignal polled by every read loop (network change cancels mid-test)
 ├── latency: 5 round trips after a warm-up request → min / average / jitter
 ├── download: 4 parallel streams, 8 s budget, bytes actually received
 └── upload: 3 parallel chunked POST streams, 6 s budget, bytes accepted by the socket
-   → SpeedTestViewModel → SpeedTestScreen (+ last 20 results in DataStore)
+   → SpeedTestViewModel → SpeedTestScreen (gauge + share, last 20 results in DataStore)
+     + NetworkMonitor (fresh transport read for the metered/abort rules)
 
 Supporting
 ├── WorkManager SpeedKeepAliveWorker (60 min) + BootCompletedReceiver
@@ -89,7 +100,8 @@ Supporting
 | `engineStatusFlow` (`EngineStatus`) | service | Settings → Measurement Engine |
 | `todayUsageFlow` | service | notification |
 | `permissionGrantedFlow` | service | settings badge, dashboard hint |
-| `SpeedTestViewModel.state` / `.history` | viewmodel | Speed Test screen |
+| `SpeedTestViewModel.state` / `.history` | viewmodel | Speed Test screen (phases, server, `usedFallback`, `pendingConfirmationMb`) |
+| `SpeedTestViewModel` server mirrors (`testServerFlow`, `testServerUrlFlow`, `testServerFlavourFlow`) | DataStore → viewmodel | endpoint resolution for a run, Settings picker |
 | Room `getDataByDate` / `getAllHistory` / `getThisMonthTotal` | DB | dashboard, history |
 | DataStore flows | PreferencesManager | theme, accent, unit, limit, intro, alerts, last speed |
 
@@ -103,8 +115,11 @@ Supporting
   components; `isDarkModeActive()` helper.
 - `components/Glass.kt` — `AppBackground` (ambient glows), `GlassCard`
   (shadow → clip → fill → 1 dp border → top highlight), `GlassChip`.
-- Motion: hero digit roll (`animateFloatAsState`), speed-test gauge sweep, nav pill
-  width animation, cross-fade between app stages.
+- Motion: hero digit roll (`animateFloatAsState`), instrument gauge (needle sweep over a
+  labelled tick scale), phase-label cross-fade + animated metric readouts, phase progress
+  bar, nav pill width animation, cross-fade between app stages.
+- Layout: single column on phones, two columns from 600 dp (Dashboard), text kept in the
+  glass-card rhythm.
 
 ## Background / OS compatibility notes
 
@@ -119,12 +134,16 @@ Supporting
 
 ## Testing
 
-- Pure JVM: `SpeedEngineTest` (the measurement rules above), `ExampleUnitTest`
-  (formatters, bits/bytes modes, `/proc/net/dev` parser, interface classification,
-  jitter, speed-test result serialization), `AccountingTest` (baselines, clamping,
-  rollover).
+- Pure JVM: `SpeedEngineTest` (the measurement rules above + the implausible-delta
+  ceiling), `SourceHealthTest` (the source-switch rule), `TestServerTest` (endpoint URLs,
+  fallback order, cost estimate), `ExampleUnitTest` (formatters, bits/bytes modes,
+  `/proc/net/dev` parser, interface classification, gauge scale, jitter, speed-test result
+  serialization), `AccountingTest` (baselines, clamping, rollover).
 - Robolectric: `HistoryDatabaseTest` (Room), `DashboardViewModelTest` (state),
-  `DashboardUiSmokeTest` (Compose render of the hero + usage cards).
+  `PreferencesManagerTest` (DataStore round-trips), `DashboardUiSmokeTest` (Compose render
+  of the hero + usage cards).
+- Instrumented (network-gated, skips without a connection):
+  `SpeedTestEngineInstrumentedTest` — real 2 s download, latency probe, abort behaviour.
 - CI (`.github/workflows/android-build.yml`): unit-test job, non-blocking lint job,
   manual build/release job (see README).
 

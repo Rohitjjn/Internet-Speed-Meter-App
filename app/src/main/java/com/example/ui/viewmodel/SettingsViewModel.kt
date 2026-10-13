@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.NetworkStatsHelper
 import com.example.data.PreferencesManager
 import com.example.data.UsageResetter
+import com.example.services.SpeedTestServers
 import com.example.util.SpeedUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
@@ -35,6 +36,16 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val accentKey: StateFlow<String> = preferencesManager.accentKeyFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "INK")
 
+    /** Which endpoint the opt-in active speed test measures against. */
+    val testServer: StateFlow<String> = preferencesManager.testServerFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SpeedTestServers.ID_AUTO)
+
+    val testServerUrl: StateFlow<String> = preferencesManager.testServerUrlFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
+
+    val testServerFlavour: StateFlow<String> = preferencesManager.testServerFlavourFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SpeedTestServers.FLAVOUR_CLOUDFLARE)
+
     fun toggleDarkMode(enabled: Boolean) {
         viewModelScope.launch { preferencesManager.setDarkMode(enabled) }
     }
@@ -49,6 +60,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun updateAccent(key: String) {
         viewModelScope.launch { preferencesManager.setAccentKey(key) }
+    }
+
+    fun updateTestServer(preference: String, customUrl: String, flavour: String) {
+        viewModelScope.launch { preferencesManager.saveTestServer(preference, customUrl, flavour) }
     }
 
     fun resetTodayUsage() {

@@ -47,6 +47,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -235,11 +236,12 @@ private fun FloatingGlassNavBar(
     currentRoute: String?,
     onNavigate: (Screen) -> Unit
 ) {
+    // Labels come from resources so the navigation is localizable (values-hi included).
     val items = listOf(
-        Triple(Screen.Dashboard, R.drawable.ic_speed, "Speed"),
-        Triple(Screen.SpeedTest, R.drawable.ic_bolt, "Test"),
-        Triple(Screen.History, R.drawable.ic_history, "History"),
-        Triple(Screen.Settings, R.drawable.ic_settings, "Settings")
+        Triple(Screen.Dashboard, R.drawable.ic_speed, stringResource(R.string.nav_speed)),
+        Triple(Screen.SpeedTest, R.drawable.ic_bolt, stringResource(R.string.nav_test)),
+        Triple(Screen.History, R.drawable.ic_history, stringResource(R.string.nav_history)),
+        Triple(Screen.Settings, R.drawable.ic_settings, stringResource(R.string.nav_settings))
     )
 
     Box(

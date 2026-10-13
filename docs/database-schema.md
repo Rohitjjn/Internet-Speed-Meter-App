@@ -2,7 +2,7 @@
 
 **Database**: `speed_data_tracker_db` (Room, **version 3**, `fallbackToDestructiveMigration`).
 
-No schema change was needed for the measurement-engine redesign: speed-test results and
+No Room schema change was needed for the endpoint/abort work: speed-test results and
 display preferences live in DataStore (see the bottom of this file), and the daily table
 keeps exactly the same four real counters per transport.
 
@@ -68,6 +68,9 @@ File `speed_meter_prefs.preferences_pb` (see `PreferencesManager`):
 | `accent_color` | String | `INK` (default) / `GREEN` / `BLUE` / `VIOLET` — glass theme accent |
 | `last_speed_down` + `last_speed_up` | Long/Long | last published (smoothed) speeds in B/s; written every 15 s so the status-bar number is meaningful immediately after a service start |
 | `speed_test_results` | String | last 20 active speed tests, one per line: `epochMillis\|downloadBps\|uploadBps\|latencyMs\|jitterMs\|server` (defensive decode: malformed lines are dropped) |
+| `test_server` | String | `AUTO` (default) / `CLOUDFLARE` / `LIBRESPEED` / `CUSTOM` — endpoint profile of the opt-in test; an unknown value behaves like `AUTO`, so a corrupt file can never make the test dead |
+| `test_server_url` | String | base URL of the user's own endpoint (only used when `test_server == CUSTOM`); an unusable value falls back to the default host |
+| `test_server_flavour` | String | `CLOUDFLARE` (`/__down?bytes=N`, `/__up`) or `LIBRESPEED` (`backend/garbage.php?ckSize=N`, `backend/empty.php`) — how the custom base URL is expanded |
 
 Reads go through a `catch`-guarded flow, so a corrupt/IO-failing preferences file degrades
 to defaults instead of crashing a collector.

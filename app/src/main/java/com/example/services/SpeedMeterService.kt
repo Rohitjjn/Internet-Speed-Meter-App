@@ -123,9 +123,27 @@ class SpeedMeterService : Service() {
     private var lastSpeedUnit = ""
     private var lastNotificationKey = ""
 
+    /**
+     * Two reusable bitmap/canvas pairs for the status-bar speed glyph. The icon changes on
+     * almost every publish on a fast line, and allocating a fresh 144×144 ARGB bitmap
+     * (~83 KB) once per second is exactly the kind of churn that shows up as battery and
+     * GC pressure. Ping-ponging two buffers keeps it allocation-free.
+     */
+    private val iconBuffers = arrayOfNulls<IconBuffer>(2)
+    private var iconBufferIndex = 0
+
+    /** How many `onTimeout` calls happened in a row without a healthy run in between. */
+    @Volatile
+    private var timeoutStreak = 0
+
+    private class IconBuffer(val bitmap: Bitmap, val canvas: Canvas, val paint: Paint)
+
     companion object {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "speed_meter_channel"
+
+        /** Status-bar glyph canvas size (px). */
+        private const val ICON_SIZE = 144
 
         const val NETWORK_WIFI = "WIFI"
         const val NETWORK_MOBILE = "MOBILE"
@@ -141,10 +159,16 @@ class SpeedMeterService : Service() {
         private const val READ_INTERVAL_MS = 500L
         private const val ACCOUNTING_PERIOD_MS = 15_000L
 
-        /** Reads without any counter movement before the active source is probed. */
-        private const val STAGNANT_READS = 6
-        /** Minimum reads between two cross-source probes (keeps the loop cheap). */
-        private const val SOURCE_PROBE_EVERY_READS = 4
+        /**
+         * Android 15+ gives a `dataSync` foreground service a daily budget. When it runs
+         * out the OS calls `onTimeout`; restarting *immediately* in a loop only burns the
+         * remaining budget faster, so the restart is delayed and eventually handed over to
+         * the WorkManager watchdog instead.
+         */
+        private const val MAX_INLINE_TIMEOUT_RESTARTS = 2
+        private const val TIMEOUT_RESTART_BACKOFF_MS = 20_000L
+        /** Uptime after which the timeout streak is considered "not a tight loop". */
+        private const val TIMEOUT_STREAK_RESET_MS = 20 * 60_000L
 
         private val _liveSpeedFlow = MutableStateFlow(LiveSpeed())
         val liveSpeedFlow: StateFlow<LiveSpeed> = _liveSpeedFlow.asStateFlow()
@@ -209,22 +233,53 @@ class SpeedMeterService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         _isServiceRunning.value = true
         startForegroundWithNotification()
+        // If the meter then keeps running for a while, the next `onTimeout` is a fresh
+        // budget event (not a restart loop) and may be answered with an inline restart again.
+        serviceScope.launch {
+            delay(TIMEOUT_STREAK_RESET_MS)
+            timeoutStreak = 0
+        }
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     /**
-     * Android 15+ (API 35): dataSync FGS get a 6-hour-per-day budget. When the
-     * budget is exhausted the system calls this. We restart the service to get a
-     * fresh budget; if the OS refuses the background restart we stop cleanly.
+     * Android 15+ (API 35): `dataSync` foreground services get a daily budget. When it is
+     * exhausted the system calls this.
+     *
+     * Restarting instantly would spend whatever budget is left in a tight loop if the OS
+     * keeps refusing, so: the first restarts are delayed by [TIMEOUT_RESTART_BACKOFF_MS]
+     * and after [MAX_INLINE_TIMEOUT_RESTARTS] the service stops cleanly and lets the
+     * WorkManager watchdog (a different FGS start path, minutes later) pick it up.
      */
-    override fun onTimeout(startId: Int, timeoutType: Int) {
-        try {
-            ContextCompat.startForegroundService(this, Intent(this, SpeedMeterService::class.java))
-        } catch (e: Exception) {
-            stopSelf()
+    private fun handleTimeout(startId: Int) {
+        timeoutStreak++
+        if (timeoutStreak > MAX_INLINE_TIMEOUT_RESTARTS) {
+            ServiceScheduler.scheduleRetry(this)
+            stopSelf(startId)
+            return
         }
+        serviceScope.launch {
+            try {
+                delay(TIMEOUT_RESTART_BACKOFF_MS)
+                ContextCompat.startForegroundService(this@SpeedMeterService, Intent(this@SpeedMeterService, SpeedMeterService::class.java))
+            } catch (e: Exception) {
+                ServiceScheduler.scheduleRetry(this@SpeedMeterService)
+                stopSelf()
+            }
+        }
+    }
+
+    /** API < 35 entry point (deprecated upstream, still called on older platforms). */
+    @Deprecated("Use the timeoutType overload on API 35+")
+    override fun onTimeout(startId: Int) {
+        handleTimeout(startId)
+    }
+
+    /** API 35+ entry point. */
+    override fun onTimeout(startId: Int, timeoutType: Int) {
+        handleTimeout(startId)
     }
 
     override fun onDestroy() {
@@ -251,6 +306,7 @@ class SpeedMeterService : Service() {
         cachedSpeedIcon = null
         lastSpeedText = ""
         lastSpeedUnit = ""
+        iconBuffers.fill(null)
     }
 
     // ============================== NETWORK TYPE (PUSH) ==============================
@@ -352,8 +408,8 @@ class SpeedMeterService : Service() {
             }
 
             var shadowSample = TrafficCounterReader.read(TrafficCounterReader.other(source))
-            var stagnantReads = 0
-            var readsSinceProbe = 0
+            // The switch decision is a pure, unit-tested rule (SourceHealthTest).
+            val health = SourceHealth()
             var readsSinceResolve = 0
             var publishesSinceStatus = 0
 
@@ -388,30 +444,23 @@ class SpeedMeterService : Service() {
                 }
 
                 val reading = TrafficCounterReader.read(source, readAt)
-                if (reading.movedFrom(lastSample)) stagnantReads = 0 else stagnantReads++
 
                 // ---- source health: never keep reading a dead counter ----
-                val unsupported = !reading.isSupported || reading.total <= 0L
-                readsSinceProbe++
-                if ((unsupported || stagnantReads >= STAGNANT_READS) &&
-                    readsSinceProbe >= SOURCE_PROBE_EVERY_READS
-                ) {
-                    readsSinceProbe = 0
-                    val other = TrafficCounterReader.other(source)
-                    val otherReading = TrafficCounterReader.read(other, readAt)
-                    val otherMoving = otherReading.movedFrom(shadowSample)
+                // The other source is read *only* when the rule says a probe is due, so a
+                // healthy counter costs one read per tick (the hot path stays cheap).
+                val evaluation = health.onRead(reading, lastSample) {
+                    val otherReading = TrafficCounterReader.read(TrafficCounterReader.other(source), readAt)
+                    val probed = ProbeResult(otherReading, shadowSample)
                     shadowSample = otherReading
-                    // Only switch when the other source is genuinely alive: comparing
-                    // absolute totals across two different counters was what made the
-                    // old implementation flap between sources every few seconds.
-                    if (otherMoving || (unsupported && otherReading.total > 0L)) {
-                        source = other
-                        lastSample = otherReading
-                        engine.seed(otherReading) // fresh anchor: no cross-source delta
-                        stagnantReads = 0
-                        publishEngineStatus(source)
-                        continue
-                    }
+                    probed
+                }
+                if (evaluation.switchToOther) {
+                    source = TrafficCounterReader.other(source)
+                    lastSample = shadowSample ?: reading
+                    engine.seed(lastSample) // fresh anchor: no cross-source delta
+                    health.onSwitched()
+                    publishEngineStatus(source)
+                    continue
                 }
 
                 lastSample = reading
@@ -595,26 +644,6 @@ class SpeedMeterService : Service() {
         )
     }
 
-    /**
-     * Resets today's counters. Persists a baseline (system-counter path) and
-     * wipes the row; the integrated path re-seeds itself from the missing row.
-     */
-    suspend fun resetToday() {
-        val today = currentDay()
-        if (networkStatsHelper.isPermissionGranted()) {
-            val m = networkStatsHelper.getMobileSinceMidnight()
-            val w = networkStatsHelper.getWifiOrEthernetSinceMidnight()
-            resetOffsets = ResetOffsets(today, m.rx, m.tx, w.rx, w.tx)
-            preferencesManager.saveResetOffsets(resetOffsets)
-        }
-        integratedMobileRx = 0L
-        integratedMobileTx = 0L
-        integratedWifiRx = 0L
-        integratedWifiTx = 0L
-        repository.deleteByDate(today)
-        _todayUsageFlow.value = DataUsageEntity(today)
-    }
-
     // ================================ NOTIFICATION ================================
 
     private fun createNotificationChannel() {
@@ -622,10 +651,10 @@ class SpeedMeterService : Service() {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Live speed ticker",
+                getString(R.string.notification_channel_name),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Shows real-time internet speed in the status bar."
+                description = getString(R.string.notification_channel_description)
                 setShowBadge(false)
             }
             nm.createNotificationChannel(channel)
@@ -674,21 +703,24 @@ class SpeedMeterService : Service() {
     }
 
     private fun buildSpeedNotification(live: LiveSpeed): Notification {
-        val networkLabel = when (live.transport) {
-            Transport.WIFI -> "Wi-Fi"
-            Transport.ETHERNET -> "Ethernet"
-            Transport.VPN -> "VPN"
-            Transport.MOBILE -> "Mobile"
-            Transport.NONE -> "Offline"
-        }
+        val networkLabel = getString(
+            when (live.transport) {
+                Transport.WIFI -> R.string.network_wifi
+                Transport.ETHERNET -> R.string.network_ethernet
+                Transport.VPN -> R.string.network_vpn
+                Transport.MOBILE -> R.string.network_mobile
+                Transport.NONE -> R.string.network_offline
+            }
+        )
         val todayTotal = _todayUsageFlow.value.total
-        val title = "↓ ${SpeedFormatter.format(live.steadyDownloadBps, speedUnit)}  " +
-            "↑ ${SpeedFormatter.format(live.steadyUploadBps, speedUnit)}"
+        val title = getString(
+            R.string.notification_speed_title,
+            SpeedFormatter.format(live.steadyDownloadBps, speedUnit),
+            SpeedFormatter.format(live.steadyUploadBps, speedUnit)
+        )
         val text = buildString {
-            append(networkLabel)
-            append(" · Today ")
-            append(BytesFormatter.format(todayTotal))
-            if (live.paused) append(" · paused")
+            append(getString(R.string.notification_text, networkLabel, BytesFormatter.format(todayTotal)))
+            if (live.paused) append(getString(R.string.notification_paused_suffix))
         }
 
         return try {
@@ -741,8 +773,12 @@ class SpeedMeterService : Service() {
 
     /**
      * Custom status-bar icon: the live download speed as text (the signature look
-     * of dedicated speed-meter apps). Bitmap is only redrawn when the string
-     * changes, so the read loop stays cheap.
+     * of dedicated speed-meter apps).
+     *
+     * The glyph is redrawn only when the displayed string changes, and it is drawn into one
+     * of two reusable bitmaps — on a fast line the number changes almost every second, and
+     * allocating a fresh 144×144 ARGB bitmap each time is pure churn. Two buffers (not one)
+     * avoid mutating a bitmap a notification may still be showing.
      */
     private fun createSpeedIcon(downloadSpeed: Long): IconCompat? {
         return try {
@@ -751,16 +787,12 @@ class SpeedMeterService : Service() {
                 return cachedSpeedIcon
             }
 
-            val width = 144
-            val height = 144
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
-            val paint = Paint().apply {
-                color = Color.WHITE
-                isAntiAlias = true
-                textAlign = Paint.Align.CENTER
-                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            }
+            val buffer = obtainIconBuffer()
+            val canvas = buffer.canvas
+            canvas.drawColor(Color.TRANSPARENT)
+            val paint = buffer.paint
+            paint.textAlign = Paint.Align.CENTER
+            paint.typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
 
             // Must stay readable at status-bar size in BOTH display modes (e.g. "842",
             // "12.4", "104.9") without clipping the 144 px icon canvas.
@@ -771,11 +803,11 @@ class SpeedMeterService : Service() {
                 4 -> 52f
                 else -> 42f
             }
-            canvas.drawText(text, width / 2f, 75f, paint)
+            canvas.drawText(text, ICON_SIZE / 2f, 75f, paint)
             paint.textSize = 51f
-            canvas.drawText(unit, width / 2f, 130f, paint)
+            canvas.drawText(unit, ICON_SIZE / 2f, 130f, paint)
 
-            val icon = IconCompat.createWithBitmap(bitmap)
+            val icon = IconCompat.createWithBitmap(buffer.bitmap)
             cachedSpeedIcon = icon
             lastSpeedText = text
             lastSpeedUnit = unit
@@ -784,5 +816,19 @@ class SpeedMeterService : Service() {
             e.printStackTrace()
             null
         }
+    }
+
+    /** Round-robins between the two reusable icon buffers (creating them on first use). */
+    private fun obtainIconBuffer(): IconBuffer {
+        iconBufferIndex = (iconBufferIndex + 1) % iconBuffers.size
+        val existing = iconBuffers[iconBufferIndex]
+        if (existing != null) return existing
+        val bitmap = Bitmap.createBitmap(ICON_SIZE, ICON_SIZE, Bitmap.Config.ARGB_8888)
+        val created = IconBuffer(bitmap, Canvas(bitmap), Paint().apply {
+            color = Color.WHITE
+            isAntiAlias = true
+        })
+        iconBuffers[iconBufferIndex] = created
+        return created
     }
 }
