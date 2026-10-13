@@ -61,7 +61,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
 
       # Setup Android environment
       - uses: android-actions/setup-android@v4
@@ -99,7 +99,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
 
       - uses: android-actions/setup-android@v4
         with:
@@ -166,8 +166,7 @@ jobs:
           if [ "${{ inputs.build_type }}" = "release" ]; then
             cp app/build/outputs/apk/release/app-release.apk "dist/speed-meter-v${{ inputs.version_name }}-release.apk"
             if [ -f app/build/outputs/mapping/release/mapping.txt ]; then
-              (cd app/build/outputs/mapping/release && zip -q mapping.zip mapping.txt)
-              cp mapping.zip dist/
+              (cd app/build/outputs/mapping/release && zip -q "$GITHUB_WORKSPACE/dist/mapping.zip" mapping.txt)
             fi
           else
             cp app/build/outputs/apk/debug/app-debug.apk "dist/speed-meter-v${{ inputs.version_name }}-debug.apk"
