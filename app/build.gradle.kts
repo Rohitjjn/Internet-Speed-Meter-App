@@ -14,7 +14,7 @@ android {
     targetSdk = 36
     // Overridable from the command line / CI workflow inputs:
     //   ./gradlew assembleRelease -PversionName=1.1.0 -PversionCode=2
-    versionCode = (findProperty("versionCode") as String?).toIntOrNull() ?: 1
+    versionCode = (findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
     versionName = (findProperty("versionName") as String?) ?: "1.0.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
