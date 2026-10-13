@@ -2,6 +2,76 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-10-13 · loop 2] — measurement-engine redesign + real speed test
+### Fixed — "speed not calculated correctly" (the reported bug)
+- **Download and upload can no longer show the same number.** Both are now computed from
+  one coherent `(rx, tx)` read of a single counter source, as two independent deltas.
+  Previously the source health-check compared *absolute totals across two different
+  counters*, so an idle device flapped between `TrafficStats` and `/proc/net/dev` every
+  few seconds and skipped/duplicated published ticks (the "34 KB, 34 KB, 25 KB, 25 KB"
+  stutter).
+- **The network type was never published** (`_networkTypeFlow` was written on creation
+  and never again), so the hero card and the notification said "Offline" even with an
+  active connection. Transport is now pushed by a
+  `ConnectivityManager.NetworkCallback` and self-heals every 30 s.
+- Sampling moved from 1 Hz to **500 ms reads / 1 s publishes** with the rate computed over
+  the *measured* window (never an assumed 1000 ms), so bursts are no longer split across
+  an imaginary second.
+- A counter that goes **backwards** (interface reset / source switch / reboot) now
+  re-anchors silently instead of publishing a bogus spike.
+- `TrafficStats` `UNSUPPORTED` (`-1`) counters are detected per direction instead of
+  silently becoming "0 bytes".
+
+### Hardened in the same loop (self-review pass)
+- `SpeedEngine`'s per-transport byte map is a `ConcurrentHashMap` and the published
+  snapshot is `@Volatile`: the 15 s accounting coroutine reads them while the read loop
+  writes, so a concurrent read can no longer throw or see a torn value.
+- Active test: throughput is averaged over the interval that carried data (first byte →
+  deadline) and progress ticks use *measured* intervals — the TCP/TLS handshake no longer
+  drags the result down by a few percent, which matters when comparing with other meters.
+- Status-bar icon text is sized for 4-character values (`104.9`), and `SpeedFormatter` no
+  longer truncates (512.9 KB/s → 513 KB/s) — every visible digit is now rounded, not cut.
+- The daily-limit warning can be dismissed (back press / outside tap = acknowledge); the
+  app still never blocks or caps data.
+- `metadata.json` description/capabilities updated to match the app (no unimplemented
+  capability is advertised).
+- Removed the 15 per-field mirror flows (`downloadSpeedFlow`, `steady*Flow`, `average*Flow`,
+  `peak*Flow`, `wifi*/mobile*Flow`, `sessionBytesFlow`, `dlHistoryFlow`, `ulHistoryFlow`)
+  that only duplicated `liveSpeedFlow` — one source of truth for every consumer.
+
+### Added
+- **`SpeedEngine`** — the measurement core extracted into pure, dependency-free Kotlin
+  with 15 unit tests (`SpeedEngineTest`) covering directions, windows, suspension,
+  counter resets, session/peak/60 s-average maths and per-transport attribution.
+- **Active speed test** (new "Test" tab): real ping/jitter + 4-stream download +
+  3-stream upload against Cloudflare's public test endpoint, live gauge, result detail
+  and a 20-entry on-device history (Mbps, the unit ISPs advertise). `INTERNET` permission
+  added **only** for this opt-in test.
+- Per-network attribution: real bytes split into Wi-Fi vs mobile live rates.
+- Session total + duration, session peak, 1-minute average, and a status-bar number that
+  no longer flashes 0 for the first second (last speed is persisted).
+- **Measurement Engine diagnostics panel** (Settings): active counter source, read
+  cadence, last window, sample count and raw kernel interface totals — everything the
+  meter is built on, verifiable by the user.
+- Speed display unit setting: **KB/s · MB/s** or **Kbps · Mbps**.
+- Accent picker (Ink / Green / Blue / Violet) for the glass theme.
+- Limit alert now buzzes (short at 50/90 %, double at 100 %) and the notification is only
+  rebuilt when something visible actually changed (fewer wake-ups when idle).
+- CI: non-blocking `lint` job that uploads the lint report; `SpeedTestResult` persistence
+  round-trip, jitter, bits/bytes and `/proc/net/dev` per-interface tests.
+
+### Changed
+- Dashboard hero card rebuilt: animated digit roll, unit-aware readouts, 1-minute average
+  + session total, thin dividers, per-network chips, smarter status label
+  (`REAL-TIME` / `PAUSED — ENGINE SUSPENDED` / `WAITING FOR ENGINE`).
+- Sparkline: shared scale for both directions (a fast upload could previously overflow
+  the chart), gradient under the upload line as well, head marker on the newest sample.
+- Bottom navigation is now 4 pills (Speed · Test · History · Settings).
+
+### Docs
+- README, project blueprint and database schema rewritten to match the new engine;
+  next-loop prompt regenerated from a fresh multi-perspective brainstorm.
+
 ## [2026-10-13]
 ### Fixed — real-time speed (the core issue)
 - Rewrote the meter as a dedicated 1 Hz foreground-service ticker on

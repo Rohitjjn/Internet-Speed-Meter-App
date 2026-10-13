@@ -3,6 +3,7 @@ package com.example.ui.theme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -62,14 +63,33 @@ val glassBorder: Color
 val glassHighlight: Color
     @Composable get() = LocalGlassHighlight.current
 
+/**
+ * User-selectable accent for the glass theme.
+ *
+ * Persisted as its [key] string, so the data layer never has to know about UI types;
+ * [fromKey] degrades to [INK] for anything unknown (old installs, corrupted prefs).
+ */
+enum class AccentTheme(val key: String) {
+    INK("INK"),
+    GREEN("GREEN"),
+    BLUE("BLUE"),
+    VIOLET("VIOLET");
+
+    companion object {
+        fun fromKey(key: String?): AccentTheme =
+            entries.firstOrNull { it.key == key } ?: INK
+    }
+}
+
 @Composable
 fun MyApplicationTheme(
     darkTheme: Boolean,
+    accent: AccentTheme = AccentTheme.INK,
     content: @Composable () -> Unit,
 ) {
     val isDark = darkTheme
     MaterialTheme(
-        colorScheme = if (isDark) DarkColors else LightColors,
+        colorScheme = withAccent(if (isDark) DarkColors else LightColors, accent, isDark),
         typography = Typography,
         content = {
             CompositionLocalProvider(
@@ -82,4 +102,15 @@ fun MyApplicationTheme(
             }
         }
     )
+}
+
+/** Applies the user's accent to the Material 3 scheme (only primary/onPrimary change). */
+private fun withAccent(scheme: ColorScheme, accent: AccentTheme, dark: Boolean): ColorScheme {
+    val primary = when (accent) {
+        AccentTheme.INK -> return scheme
+        AccentTheme.GREEN -> if (dark) SpeedDownDark else SpeedDown
+        AccentTheme.BLUE -> if (dark) SpeedUpDark else SpeedUp
+        AccentTheme.VIOLET -> if (dark) AccentVioletDark else AccentViolet
+    }
+    return scheme.copy(primary = primary, onPrimary = Color.White)
 }

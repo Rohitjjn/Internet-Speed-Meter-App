@@ -61,6 +61,11 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.R
+import com.example.services.SpeedMeterService
+import com.example.ui.theme.AccentViolet
+import com.example.ui.theme.AccentVioletDark
+import com.example.util.BytesFormatter
+import com.example.util.SpeedUnit
 import com.example.ui.components.AppBackground
 import com.example.ui.components.AppIcon
 import com.example.ui.components.GlassCard
@@ -84,6 +89,11 @@ fun SettingsScreen(
     val storedMobileLimitUnit by viewModel.mobileLimitUnit.collectAsState()
     val isDark by viewModel.isDarkMode.collectAsState()
     val darkThemeActive = isDark ?: androidx.compose.foundation.isSystemInDarkTheme()
+    val speedUnit by viewModel.speedUnit.collectAsState()
+    val accentKey by viewModel.accentKey.collectAsState()
+    val liveSpeed by SpeedMeterService.liveSpeedFlow.collectAsState()
+    val engineStatus by SpeedMeterService.engineStatusFlow.collectAsState()
+    val serviceRunning by SpeedMeterService.isServiceRunning.collectAsState()
 
     var mobileLimitText by remember { mutableStateOf("") }
     var mobileLimitUnit by remember { mutableStateOf("GB") }
@@ -151,60 +161,125 @@ fun SettingsScreen(
             // ---------------- APPEARANCE ----------------
             SectionLabel("APPEARANCE")
             GlassCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).testTag("theme_card")) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(RoundedCornerShape(11.dp))
-                                .background(glassColor),
-                            contentAlignment = Alignment.Center
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            AppIcon(
-                                resId = if (darkThemeActive) R.drawable.ic_dark_mode else R.drawable.ic_light_mode,
-                                contentDescription = "Theme",
-                                tint = MaterialTheme.colorScheme.onBackground,
-                                modifier = Modifier.size(17.dp)
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(11.dp))
+                                    .background(glassColor),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                AppIcon(
+                                    resId = if (darkThemeActive) R.drawable.ic_dark_mode else R.drawable.ic_light_mode,
+                                    contentDescription = "Theme",
+                                    tint = MaterialTheme.colorScheme.onBackground,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
+                            Column {
+                                Text(
+                                    text = "Dark Mode",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                                Text(
+                                    text = when {
+                                        isDark == null -> "Following system"
+                                        isDark == true -> "Always on"
+                                        else -> "Always off"
+                                    },
+                                    fontSize = 11.sp,
+                                    color = secondary()
+                                )
+                            }
                         }
-                        Column {
+                        Switch(
+                            checked = darkThemeActive,
+                            onCheckedChange = { viewModel.toggleDarkMode(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                uncheckedThumbColor = MaterialTheme.colorScheme.primary,
+                                uncheckedTrackColor = glassColor
+                            ),
+                            modifier = Modifier.testTag("dark_mode_toggle_switch")
+                        )
+                    }
+
+                    HorizontalDivider(color = glassBorder.copy(alpha = 0.5f))
+
+                    // ---- speed unit ----
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Dark Mode",
+                                text = "Speed Unit",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onBackground
                             )
                             Text(
-                                text = when {
-                                    isDark == null -> "Following system"
-                                    isDark == true -> "Always on"
-                                    else -> "Always off"
-                                },
+                                text = if (speedUnit == SpeedUnit.BYTES)
+                                    "KB/s · MB/s — device meter style"
+                                else
+                                    "Kbps · Mbps — the unit ISPs advertise",
                                 fontSize = 11.sp,
                                 color = secondary()
                             )
                         }
+                        SegmentedControl(
+                            selectedValue = if (speedUnit == SpeedUnit.BYTES) "KB/s" else "Mbps",
+                            options = listOf("KB/s", "Mbps"),
+                            onSelected = { label ->
+                                viewModel.updateSpeedUnit(
+                                    if (label == "Mbps") SpeedUnit.BITS else SpeedUnit.BYTES
+                                )
+                            },
+                            modifier = Modifier.testTag("speed_unit_segmented")
+                        )
                     }
-                    Switch(
-                        checked = darkThemeActive,
-                        onCheckedChange = { viewModel.toggleDarkMode(it) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            uncheckedThumbColor = MaterialTheme.colorScheme.primary,
-                            uncheckedTrackColor = glassColor
-                        ),
-                        modifier = Modifier.testTag("dark_mode_toggle_switch")
-                    )
+
+                    HorizontalDivider(color = glassBorder.copy(alpha = 0.5f))
+
+                    // ---- accent ----
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Accent",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Text(
+                                text = "Tints the buttons and the selected nav pill.",
+                                fontSize = 11.sp,
+                                color = secondary()
+                            )
+                        }
+                        AccentPicker(
+                            selected = accentKey,
+                            onSelected = { viewModel.updateAccent(it) }
+                        )
+                    }
                 }
             }
 
@@ -451,6 +526,59 @@ fun SettingsScreen(
                 }
             }
 
+            // ---------------- MEASUREMENT ENGINE ----------------
+            SectionLabel("MEASUREMENT ENGINE", top = 18.dp)
+            GlassCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .testTag("engine_diagnostics_card")
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "Live, straight from the OS counters",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    EngineRow("Status", if (serviceRunning) (if (liveSpeed.paused) "Running (paused)" else "Running") else "Stopped")
+                    EngineRow("Counter source", engineStatus.source.label)
+                    EngineRow("Read cadence", "500 ms · publish ${liveSpeed.windowMs} ms window")
+                    EngineRow("Samples this session", liveSpeed.samplesTaken.toString())
+                    EngineRow("Network", networkTypeLabel(SpeedMeterService.networkTypeFlow.value))
+                    EngineRow(
+                        "Raw counters",
+                        "rx ${BytesFormatter.format(liveSpeed.sessionRxBytes)} · tx ${BytesFormatter.format(liveSpeed.sessionTxBytes)}"
+                    )
+                    if (engineStatus.interfaces.isNotEmpty()) {
+                        HorizontalDivider(color = glassBorder.copy(alpha = 0.5f))
+                        Text(
+                            text = "KERNEL INTERFACES (/proc/net/dev)",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 1.sp,
+                            color = secondary()
+                        )
+                        engineStatus.interfaces.forEach { stat ->
+                            EngineRow(
+                                "• ${stat.name}",
+                                "${BytesFormatter.format(stat.rx)} ↓ · ${BytesFormatter.format(stat.tx)} ↑"
+                            )
+                        }
+                    }
+                    Text(
+                        text = "These are the raw numbers the meter is built on, so you can verify " +
+                            "every value yourself. Nothing here is estimated or simulated.",
+                        fontSize = 10.sp,
+                        color = secondary().copy(alpha = 0.85f)
+                    )
+                }
+            }
+
             // ---------------- ABOUT ----------------
             SectionLabel("ABOUT", top = 18.dp)
             GlassCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
@@ -530,6 +658,70 @@ fun SettingsScreen(
             containerColor = MaterialTheme.colorScheme.surface
         )
     }
+}
+
+@Composable
+private fun AccentPicker(selected: String, onSelected: (String) -> Unit) {
+    val accents = listOf(
+        "INK" to MaterialTheme.colorScheme.primary,
+        "GREEN" to (if (isDarkModeActive()) SpeedDownDark else SpeedDown),
+        "BLUE" to (if (isDarkModeActive()) SpeedUpDark else SpeedUp),
+        "VIOLET" to (if (isDarkModeActive()) AccentVioletDark else AccentViolet)
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        accents.forEach { (key, color) ->
+            val isSelected = key == selected
+            Box(
+                modifier = Modifier
+                    .size(if (isSelected) 30.dp else 26.dp)
+                    .clip(RoundedCornerShape(100.dp))
+                    .background(color)
+                    .border(
+                        width = if (isSelected) 2.dp else 1.dp,
+                        color = if (isSelected) MaterialTheme.colorScheme.onBackground
+                        else glassBorder,
+                        shape = RoundedCornerShape(100.dp)
+                    )
+                    .clickable { onSelected(key) }
+                    .testTag("accent_$key"),
+                contentAlignment = Alignment.Center
+            ) {
+                if (isSelected) {
+                    AppIcon(
+                        resId = R.drawable.ic_check,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EngineRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(text = label, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = secondary())
+        Text(
+            text = value,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+    }
+}
+
+private fun networkTypeLabel(type: String): String = when (type) {
+    SpeedMeterService.NETWORK_WIFI -> "Wi-Fi"
+    SpeedMeterService.NETWORK_MOBILE -> "Mobile data"
+    SpeedMeterService.NETWORK_ETHERNET -> "Ethernet"
+    SpeedMeterService.NETWORK_VPN -> "VPN"
+    else -> "Offline"
 }
 
 @Composable

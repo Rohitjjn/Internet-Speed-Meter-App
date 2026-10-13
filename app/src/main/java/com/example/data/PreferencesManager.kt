@@ -6,11 +6,15 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.util.SpeedUnit
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
+import java.io.IOException
 
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "speed_meter_prefs")
 
@@ -28,6 +32,58 @@ data class ResetOffsets(
     fun appliesTo(day: String): Boolean = date == day
 }
 
+/**
+ * One finished active speed test. Values are **real measurements** (bytes actually
+ * transferred over the socket / round-trip times actually observed) — never estimates.
+ */
+data class SpeedTestResult(
+    val atMillis: Long,
+    val downloadBps: Double,
+    val uploadBps: Double,
+    val latencyMs: Long,
+    val jitterMs: Long,
+    val server: String
+) {
+    companion object {
+        private const val FIELD_SEPARATOR = '|'
+        private const val ENTRY_SEPARATOR = '\n'
+
+        /** Compact, dependency-free serialization: one result per line. */
+        fun encode(list: List<SpeedTestResult>): String = list.joinToString(ENTRY_SEPARATOR.toString()) {
+            buildString {
+                append(it.atMillis)
+                append(FIELD_SEPARATOR)
+                append(it.downloadBps.toLong())
+                append(FIELD_SEPARATOR)
+                append(it.uploadBps.toLong())
+                append(FIELD_SEPARATOR)
+                append(it.latencyMs)
+                append(FIELD_SEPARATOR)
+                append(it.jitterMs)
+                append(FIELD_SEPARATOR)
+                append(it.server.replace(FIELD_SEPARATOR, ' '))
+            }
+        }
+
+        fun decode(raw: String?): List<SpeedTestResult> {
+            if (raw.isNullOrBlank()) return emptyList()
+            val results = ArrayList<SpeedTestResult>()
+            for (line in raw.split(ENTRY_SEPARATOR)) {
+                if (line.isBlank()) continue
+                val parts = line.split(FIELD_SEPARATOR)
+                if (parts.size < 6) continue
+                val at = parts[0].toLongOrNull() ?: continue
+                val down = parts[1].toDoubleOrNull() ?: continue
+                val up = parts[2].toDoubleOrNull() ?: continue
+                val latency = parts[3].toLongOrNull() ?: continue
+                val jitter = parts[4].toLongOrNull() ?: continue
+                results += SpeedTestResult(at, down, up, latency, jitter, parts[5])
+            }
+            return results
+        }
+    }
+}
+
 class PreferencesManager(private val context: Context) {
 
     companion object {
@@ -42,21 +98,64 @@ class PreferencesManager(private val context: Context) {
         val KEY_RESET_WIFI_TX = longPreferencesKey("reset_wifi_tx")
         val KEY_LAST_DISMISSED_MOBILE_ALERT = longPreferencesKey("last_dismissed_mobile_alert")
         val KEY_LAST_DISMISSED_ALERT_DATE = stringPreferencesKey("last_dismissed_alert_date")
+        val KEY_SPEED_UNIT = stringPreferencesKey("speed_unit")
+        val KEY_ACCENT = stringPreferencesKey("accent_color")
+        val KEY_LAST_SPEED_DOWN = longPreferencesKey("last_speed_down")
+        val KEY_LAST_SPEED_UP = longPreferencesKey("last_speed_up")
+        val KEY_SPEED_TEST_RESULTS = stringPreferencesKey("speed_test_results")
+    }
+
+    /**
+     * DataStore can fail to read (corrupt file, IO error). Without this guard the whole
+     * preferences flow would crash the collector — so a read error degrades to defaults.
+     */
+    private val data: Flow<Preferences> = context.dataStore.data.catch { error ->
+        if (error is IOException) emit(emptyPreferences()) else throw error
     }
 
     // ---------- Theme ----------
 
-    val isDarkModeFlow: Flow<Boolean?> = context.dataStore.data.map { it[KEY_IS_DARK_MODE] }
+    val isDarkModeFlow: Flow<Boolean?> = data.map { it[KEY_IS_DARK_MODE] }
 
     suspend fun setDarkMode(enabled: Boolean) {
         context.dataStore.edit { it[KEY_IS_DARK_MODE] = enabled }
     }
 
+    // ---------- Accent ----------
+
+    /** Stored as a key string so the data layer stays independent of the UI theme. */
+    val accentKeyFlow: Flow<String> = data.map { it[KEY_ACCENT] ?: "INK" }
+
+    suspend fun setAccentKey(key: String) {
+        context.dataStore.edit { it[KEY_ACCENT] = key }
+    }
+
+    // ---------- Speed display unit ----------
+
+    val speedUnitFlow: Flow<SpeedUnit> = data.map { SpeedUnit.fromKey(it[KEY_SPEED_UNIT]) }
+
+    suspend fun setSpeedUnit(unit: SpeedUnit) {
+        context.dataStore.edit { it[KEY_SPEED_UNIT] = unit.key }
+    }
+
+    // ---------- Last known live speed (status-bar continuity) ----------
+
+    val lastSpeedFlow: Flow<Pair<Long, Long>> = data.map {
+        (it[KEY_LAST_SPEED_DOWN] ?: 0L) to (it[KEY_LAST_SPEED_UP] ?: 0L)
+    }
+
+    suspend fun saveLastSpeed(downloadBps: Long, uploadBps: Long) {
+        context.dataStore.edit {
+            it[KEY_LAST_SPEED_DOWN] = downloadBps.coerceAtLeast(0L)
+            it[KEY_LAST_SPEED_UP] = uploadBps.coerceAtLeast(0L)
+        }
+    }
+
     // ---------- Daily mobile data limit (alerts) ----------
 
-    val mobileLimitFlow: Flow<Double> = context.dataStore.data.map { it[KEY_MOBILE_LIMIT] ?: 0.0 }
+    val mobileLimitFlow: Flow<Double> = data.map { it[KEY_MOBILE_LIMIT] ?: 0.0 }
 
-    val mobileLimitUnitFlow: Flow<String> = context.dataStore.data.map { it[KEY_MOBILE_LIMIT_UNIT] ?: "GB" }
+    val mobileLimitUnitFlow: Flow<String> = data.map { it[KEY_MOBILE_LIMIT_UNIT] ?: "GB" }
 
     suspend fun saveMobileLimit(limit: Double, unit: String) {
         context.dataStore.edit {
@@ -67,7 +166,7 @@ class PreferencesManager(private val context: Context) {
 
     // ---------- Onboarding ----------
 
-    val isOnboardingCompletedFlow: Flow<Boolean> = context.dataStore.data.map {
+    val isOnboardingCompletedFlow: Flow<Boolean> = data.map {
         it[KEY_ONBOARDING_COMPLETED] ?: false
     }
 
@@ -77,7 +176,7 @@ class PreferencesManager(private val context: Context) {
 
     // ---------- "Reset today" baselines ----------
 
-    val resetOffsetsFlow: Flow<ResetOffsets> = context.dataStore.data.map { prefs ->
+    val resetOffsetsFlow: Flow<ResetOffsets> = data.map { prefs ->
         ResetOffsets(
             date = prefs[KEY_RESET_DATE] ?: "",
             mobileRx = prefs[KEY_RESET_MOBILE_RX] ?: 0L,
@@ -109,11 +208,11 @@ class PreferencesManager(private val context: Context) {
 
     // ---------- In-app alert dismissal (daily limit) ----------
 
-    val lastDismissedMobileAlertFlow: Flow<Long> = context.dataStore.data.map {
+    val lastDismissedMobileAlertFlow: Flow<Long> = data.map {
         it[KEY_LAST_DISMISSED_MOBILE_ALERT] ?: 0L
     }
 
-    val lastDismissedAlertDateFlow: Flow<String> = context.dataStore.data.map {
+    val lastDismissedAlertDateFlow: Flow<String> = data.map {
         it[KEY_LAST_DISMISSED_ALERT_DATE] ?: ""
     }
 
@@ -122,5 +221,23 @@ class PreferencesManager(private val context: Context) {
             it[KEY_LAST_DISMISSED_MOBILE_ALERT] = level
             it[KEY_LAST_DISMISSED_ALERT_DATE] = date
         }
+    }
+
+    // ---------- Active speed-test history ----------
+
+    val speedTestResultsFlow: Flow<List<SpeedTestResult>> = data.map {
+        SpeedTestResult.decode(it[KEY_SPEED_TEST_RESULTS])
+    }
+
+    suspend fun saveSpeedTestResult(result: SpeedTestResult, keep: Int = 20) {
+        context.dataStore.edit { prefs ->
+            val existing = SpeedTestResult.decode(prefs[KEY_SPEED_TEST_RESULTS])
+            val updated = (listOf(result) + existing).take(keep)
+            prefs[KEY_SPEED_TEST_RESULTS] = SpeedTestResult.encode(updated)
+        }
+    }
+
+    suspend fun clearSpeedTestResults() {
+        context.dataStore.edit { it[KEY_SPEED_TEST_RESULTS] = "" }
     }
 }

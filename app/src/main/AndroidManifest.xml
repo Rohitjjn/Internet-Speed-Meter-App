@@ -4,6 +4,14 @@
 
     <!-- Needed to read the active network type for the meter UI. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!--
+        Only used by the OPT-IN active speed test (Dashboard → Test → START TEST), which
+        measures the real download/upload capacity against a public test endpoint.
+        The passive meter never opens a socket, and the app collects/sends no user data.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- One short buzz for the 50/90/100 % daily-limit warning (normal permission). -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Special permission (user-granted in system settings) for exact per-day totals. -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
     <!-- Live speed ticker in the status bar. -->

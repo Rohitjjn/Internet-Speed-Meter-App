@@ -23,6 +23,7 @@ import com.example.services.SpeedMeterService
 import com.example.ui.screens.IntroScreen
 import com.example.ui.screens.MainScreen
 import com.example.ui.screens.SplashScreen
+import com.example.ui.theme.AccentTheme
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.launch
 
@@ -49,9 +50,13 @@ class MainActivity : ComponentActivity() {
             val darkThemeActive = customDarkMode ?: isSystemDark
 
             val isOnboardingCompleted by preferencesManager.isOnboardingCompletedFlow.collectAsState(initial = false)
+            val accentKey by preferencesManager.accentKeyFlow.collectAsState(initial = "INK")
             val scope = rememberCoroutineScope()
 
-            MyApplicationTheme(darkTheme = darkThemeActive) {
+            MyApplicationTheme(
+                darkTheme = darkThemeActive,
+                accent = AccentTheme.fromKey(accentKey)
+            ) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     var currentStage by remember { mutableStateOf(AppStage.SPLASH) }
 
