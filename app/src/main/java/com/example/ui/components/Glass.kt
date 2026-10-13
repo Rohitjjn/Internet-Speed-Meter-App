@@ -28,6 +28,8 @@ import com.example.ui.theme.LightGlowViolet
 import com.example.ui.theme.glassBorder
 import com.example.ui.theme.glassColor
 import com.example.ui.theme.glassHighlight
+import androidx.compose.foundation.isSystemInDarkTheme
+import com.example.ui.theme.isDarkModeActive
 
 /**
  * Ambient background: a soft base plus three large colored glows.

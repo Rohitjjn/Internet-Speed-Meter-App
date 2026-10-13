@@ -53,15 +53,12 @@ val LocalDarkTheme = staticCompositionLocalOf { false }
 @Composable
 fun isDarkModeActive(): Boolean = LocalDarkTheme.current
 
-@Composable
 val glassColor: Color
     @Composable get() = LocalGlassColor.current
 
-@Composable
 val glassBorder: Color
     @Composable get() = LocalGlassBorder.current
 
-@Composable
 val glassHighlight: Color
     @Composable get() = LocalGlassHighlight.current
 
