@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.res.stringResource
 import com.example.R
 import com.example.services.SpeedMeterService
 import com.example.ui.theme.AccentViolet
@@ -95,6 +96,7 @@ fun SettingsScreen(
     val darkThemeActive = isDark ?: androidx.compose.foundation.isSystemInDarkTheme()
     val speedUnit by viewModel.speedUnit.collectAsState()
     val accentKey by viewModel.accentKey.collectAsState()
+    val speedTestServer by viewModel.speedTestServer.collectAsState()
     val liveSpeed by SpeedMeterService.liveSpeedFlow.collectAsState()
     val engineStatus by SpeedMeterService.engineStatusFlow.collectAsState()
     val serviceRunning by SpeedMeterService.isServiceRunning.collectAsState()
@@ -146,7 +148,7 @@ fun SettingsScreen(
                     .padding(top = 24.dp, bottom = 14.dp)
             ) {
                 Text(
-                    text = "SYSTEM SETTINGS",
+                    text = stringResource(R.string.settings_eyebrow),
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.5.sp,
@@ -155,7 +157,7 @@ fun SettingsScreen(
                 )
                 Spacer(modifier = Modifier.height(3.dp))
                 Text(
-                    text = "App Preferences",
+                    text = stringResource(R.string.settings_title),
                     fontSize = 28.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onBackground
@@ -163,7 +165,7 @@ fun SettingsScreen(
             }
 
             // ---------------- APPEARANCE ----------------
-            SectionLabel("APPEARANCE")
+            SectionLabel(stringResource(R.string.section_appearance))
             GlassCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).testTag("theme_card")) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Row(
@@ -186,23 +188,23 @@ fun SettingsScreen(
                             ) {
                                 AppIcon(
                                     resId = if (darkThemeActive) R.drawable.ic_dark_mode else R.drawable.ic_light_mode,
-                                    contentDescription = "Theme",
+                                    contentDescription = stringResource(R.string.cd_theme),
                                     tint = MaterialTheme.colorScheme.onBackground,
                                     modifier = Modifier.size(17.dp)
                                 )
                             }
                             Column {
                                 Text(
-                                    text = "Dark Mode",
+                                    text = stringResource(R.string.setting_dark_mode),
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onBackground
                                 )
                                 Text(
                                     text = when {
-                                        isDark == null -> "Following system"
-                                        isDark == true -> "Always on"
-                                        else -> "Always off"
+                                        isDark == null -> stringResource(R.string.dark_mode_system)
+                                        isDark == true -> stringResource(R.string.dark_mode_on)
+                                        else -> stringResource(R.string.dark_mode_off)
                                     },
                                     fontSize = 11.sp,
                                     color = secondary()
@@ -232,16 +234,16 @@ fun SettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Speed Unit",
+                                text = stringResource(R.string.setting_speed_unit),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onBackground
                             )
                             Text(
-                                text = if (speedUnit == SpeedUnit.BYTES)
-                                    "KB/s · MB/s — device meter style"
-                                else
-                                    "Kbps · Mbps — the unit ISPs advertise",
+                                text = stringResource(
+                                        if (speedUnit == SpeedUnit.BYTES) R.string.speed_unit_bytes
+                                        else R.string.speed_unit_bits
+                                    ),
                                 fontSize = 11.sp,
                                 color = secondary()
                             )
@@ -268,13 +270,13 @@ fun SettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Accent",
+                                text = stringResource(R.string.setting_accent),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onBackground
                             )
                             Text(
-                                text = "Tints the buttons and the selected nav pill.",
+                                text = stringResource(R.string.setting_accent_body),
                                 fontSize = 11.sp,
                                 color = secondary()
                             )
@@ -288,20 +290,20 @@ fun SettingsScreen(
             }
 
             // ---------------- DAILY LIMIT ----------------
-            SectionLabel("DAILY MOBILE DATA ALERTS", top = 18.dp)
+            SectionLabel(stringResource(R.string.section_limits), top = 18.dp)
             GlassCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).testTag("limits_card")) {
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Text(
-                        text = "Daily Mobile Data Limit",
+                        text = stringResource(R.string.limit_title),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onBackground
                     )
                     Text(
-                        text = "Get a prominent on-screen warning at 50%, 90% and 100%.",
+                        text = stringResource(R.string.limit_body),
                         fontSize = 11.sp,
                         color = secondary()
                     )
@@ -317,7 +319,7 @@ fun SettingsScreen(
                                     mobileLimitText = newVal
                                 }
                             },
-                            placeholder = { Text("e.g. 2") },
+                            placeholder = { Text(stringResource(R.string.limit_placeholder)) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             singleLine = true,
                             colors = OutlinedTextFieldDefaults.colors(
@@ -361,13 +363,40 @@ fun SettingsScreen(
                             modifier = Modifier.size(17.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Save Limit", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.action_save_limit), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
 
+            // ---------------- SPEED TEST SERVER ----------------
+            SectionLabel(stringResource(R.string.section_test_server), top = 18.dp)
+            GlassCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).testTag("speed_test_server_card")) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Column {
+                        Text(
+                            text = stringResource(R.string.setting_test_server),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        Text(
+                            text = stringResource(R.string.setting_test_server_body),
+                            fontSize = 11.sp,
+                            color = secondary()
+                        )
+                    }
+                    ServerChoiceRow(
+                        selected = speedTestServer,
+                        onSelected = { viewModel.updateSpeedTestServer(it) }
+                    )
+                }
+            }
+
             // ---------------- PERMISSIONS ----------------
-            SectionLabel("SYSTEM PERMISSIONS", top = 18.dp)
+            SectionLabel(stringResource(R.string.section_permissions), top = 18.dp)
             GlassCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).testTag("permissions_card")) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -375,12 +404,14 @@ fun SettingsScreen(
                 ) {
                     PermissionRow(
                         iconRes = R.drawable.ic_shield,
-                        title = "Usage Access",
-                        subtitle = if (hasUsagePermission) "Exact system counters active"
-                        else "Needed for exact daily totals",
+                        title = stringResource(R.string.permission_usage),
+                        subtitle = stringResource(
+                            if (hasUsagePermission) R.string.permission_usage_active
+                            else R.string.permission_usage_needed
+                        ),
                         active = hasUsagePermission,
                         liveAccent = liveAccent,
-                        buttonLabel = "GRANT",
+                        buttonLabel = stringResource(R.string.action_grant),
                         onButton = {
                             try {
                                 context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
@@ -393,12 +424,14 @@ fun SettingsScreen(
                     HorizontalDivider(color = glassBorder.copy(alpha = 0.5f))
                     PermissionRow(
                         iconRes = R.drawable.ic_notifications,
-                        title = "Notifications",
-                        subtitle = if (hasNotificationPermission) "Status-bar ticker visible"
-                        else "Shows the live speed ticker",
+                        title = stringResource(R.string.permission_notifications),
+                        subtitle = stringResource(
+                            if (hasNotificationPermission) R.string.permission_notifications_active
+                            else R.string.permission_notifications_needed
+                        ),
                         active = hasNotificationPermission,
                         liveAccent = liveAccent,
-                        buttonLabel = "GRANT",
+                        buttonLabel = stringResource(R.string.action_grant),
                         onButton = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                 try {
@@ -416,7 +449,7 @@ fun SettingsScreen(
                 }
             }
 
-            SectionLabel("KEEP RUNNING IN BACKGROUND", top = 18.dp)
+            SectionLabel(stringResource(R.string.section_background), top = 18.dp)
             GlassCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).testTag("autostart_boot_card")) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -442,13 +475,13 @@ fun SettingsScreen(
                         }
                         Column {
                             Text(
-                                text = "Auto Start & Battery",
+                                text = stringResource(R.string.background_title),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onBackground
                             )
                             Text(
-                                text = "Some brands kill background apps. Allow both to keep the meter alive 24/7.",
+                                text = stringResource(R.string.background_body),
                                 fontSize = 11.sp,
                                 color = secondary()
                             )
@@ -472,7 +505,7 @@ fun SettingsScreen(
                                 .height(38.dp)
                                 .testTag("configure_autostart_button")
                         ) {
-                            Text("Autostart", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.action_autostart), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                         Button(
                             onClick = { openBatteryOptimizationSettings(context) },
@@ -495,14 +528,14 @@ fun SettingsScreen(
                                 modifier = Modifier.size(14.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Battery", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.action_battery), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
 
             // ---------------- DATA MANAGEMENT ----------------
-            SectionLabel("DATA MANAGEMENT", top = 18.dp)
+            SectionLabel(stringResource(R.string.section_data), top = 18.dp)
             GlassCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).testTag("data_management_card")) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -510,9 +543,9 @@ fun SettingsScreen(
                 ) {
                     DataRow(
                         iconRes = R.drawable.ic_restore,
-                        title = "Reset Today's Usage",
-                        subtitle = "Zero out today's counters.",
-                        buttonLabel = "RESET",
+                        title = stringResource(R.string.data_reset_title),
+                        subtitle = stringResource(R.string.data_reset_body),
+                        buttonLabel = stringResource(R.string.action_reset),
                         danger = false,
                         onButton = { showResetConfirmation = true },
                         tag = "reset_today_button"
@@ -520,9 +553,9 @@ fun SettingsScreen(
                     HorizontalDivider(color = glassBorder.copy(alpha = 0.5f))
                     DataRow(
                         iconRes = R.drawable.ic_delete_forever,
-                        title = "Purge History",
-                        subtitle = "Delete all stored history permanently.",
-                        buttonLabel = "PURGE",
+                        title = stringResource(R.string.data_purge_title),
+                        subtitle = stringResource(R.string.data_purge_body),
+                        buttonLabel = stringResource(R.string.action_purge),
                         danger = true,
                         onButton = { showPurgeConfirmation = true },
                         tag = "purge_history_button"
@@ -531,7 +564,7 @@ fun SettingsScreen(
             }
 
             // ---------------- MEASUREMENT ENGINE ----------------
-            SectionLabel("MEASUREMENT ENGINE", top = 18.dp)
+            SectionLabel(stringResource(R.string.section_engine), top = 18.dp)
             GlassCard(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -543,24 +576,41 @@ fun SettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
-                        text = "Live, straight from the OS counters",
+                        text = stringResource(R.string.engine_body),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onBackground
                     )
-                    EngineRow("Status", if (serviceRunning) (if (liveSpeed.paused) "Running (paused)" else "Running") else "Stopped")
-                    EngineRow("Counter source", engineStatus.source.label)
-                    EngineRow("Read cadence", "500 ms · publish ${liveSpeed.windowMs} ms window")
-                    EngineRow("Samples this session", liveSpeed.samplesTaken.toString())
-                    EngineRow("Network", networkTypeLabel(SpeedMeterService.networkTypeFlow.value))
                     EngineRow(
-                        "Raw counters",
-                        "rx ${BytesFormatter.format(liveSpeed.sessionRxBytes)} · tx ${BytesFormatter.format(liveSpeed.sessionTxBytes)}"
+                        stringResource(R.string.engine_status),
+                        if (serviceRunning) {
+                            stringResource(
+                                if (liveSpeed.paused) R.string.engine_status_paused
+                                else R.string.engine_status_running
+                            )
+                        } else {
+                            stringResource(R.string.engine_status_stopped)
+                        }
+                    )
+                    EngineRow(stringResource(R.string.engine_source), engineStatus.source.label)
+                    EngineRow(
+                        stringResource(R.string.engine_cadence),
+                        stringResource(R.string.engine_cadence_value, liveSpeed.windowMs)
+                    )
+                    EngineRow(stringResource(R.string.engine_samples), liveSpeed.samplesTaken.toString())
+                    EngineRow(stringResource(R.string.engine_network), networkTypeLabel(SpeedMeterService.networkTypeFlow.value))
+                    EngineRow(
+                        stringResource(R.string.engine_raw),
+                        stringResource(
+                            R.string.engine_raw_value,
+                            BytesFormatter.format(liveSpeed.sessionRxBytes),
+                            BytesFormatter.format(liveSpeed.sessionTxBytes)
+                        )
                     )
                     if (engineStatus.interfaces.isNotEmpty()) {
                         HorizontalDivider(color = glassBorder.copy(alpha = 0.5f))
                         Text(
-                            text = "KERNEL INTERFACES (/proc/net/dev)",
+                            text = stringResource(R.string.engine_interfaces),
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
@@ -575,8 +625,7 @@ fun SettingsScreen(
                         }
                     }
                     Text(
-                        text = "These are the raw numbers the meter is built on, so you can verify " +
-                            "every value yourself. Nothing here is estimated or simulated.",
+                        text = stringResource(R.string.engine_footer),
                         fontSize = 10.sp,
                         color = secondary().copy(alpha = 0.85f)
                     )
@@ -584,7 +633,7 @@ fun SettingsScreen(
             }
 
             // ---------------- ABOUT ----------------
-            SectionLabel("ABOUT", top = 18.dp)
+            SectionLabel(stringResource(R.string.section_about), top = 18.dp)
             GlassCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
                 Row(
                     modifier = Modifier
@@ -595,13 +644,13 @@ fun SettingsScreen(
                 ) {
                     Column {
                         Text(
-                            text = "Internet Speed Meter",
+                            text = stringResource(R.string.about_name),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onBackground
                         )
                         Text(
-                            text = "Version ${appVersion(context)} · real-time engine",
+                            text = stringResource(R.string.about_version, appVersion(context)),
                             fontSize = 11.sp,
                             color = secondary()
                         )
@@ -628,16 +677,24 @@ fun SettingsScreen(
     if (showResetConfirmation) {
         AlertDialog(
             onDismissRequest = { showResetConfirmation = false },
-            title = { Text("Reset Today's Usage", fontWeight = FontWeight.Bold) },
-            text = { Text("Today's counters will be set back to zero. This cannot be undone.", color = secondary()) },
+            title = { Text(stringResource(R.string.dialog_reset_title), fontWeight = FontWeight.Bold) },
+            text = { Text(stringResource(R.string.dialog_reset_body), color = secondary()) },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.resetTodayUsage()
                     showResetConfirmation = false
-                }) { Text("RESET", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
+                }) {
+                        Text(
+                            stringResource(R.string.action_reset),
+                            color = MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
             },
             dismissButton = {
-                TextButton(onClick = { showResetConfirmation = false }) { Text("CANCEL", color = secondary()) }
+                TextButton(onClick = { showResetConfirmation = false }) {
+                        Text(stringResource(R.string.action_cancel), color = secondary())
+                    }
             },
             shape = RoundedCornerShape(24.dp),
             containerColor = MaterialTheme.colorScheme.surface
@@ -647,16 +704,24 @@ fun SettingsScreen(
     if (showPurgeConfirmation) {
         AlertDialog(
             onDismissRequest = { showPurgeConfirmation = false },
-            title = { Text("Purge History", fontWeight = FontWeight.Bold) },
-            text = { Text("All stored history will be permanently deleted. This is irreversible.", color = secondary()) },
+            title = { Text(stringResource(R.string.dialog_purge_title), fontWeight = FontWeight.Bold) },
+            text = { Text(stringResource(R.string.dialog_purge_body), color = secondary()) },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.clearAllHistory()
                     showPurgeConfirmation = false
-                }) { Text("PURGE ALL", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
+                }) {
+                        Text(
+                            stringResource(R.string.action_purge_all),
+                            color = MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
             },
             dismissButton = {
-                TextButton(onClick = { showPurgeConfirmation = false }) { Text("CANCEL", color = secondary()) }
+                TextButton(onClick = { showPurgeConfirmation = false }) {
+                        Text(stringResource(R.string.action_cancel), color = secondary())
+                    }
             },
             shape = RoundedCornerShape(24.dp),
             containerColor = MaterialTheme.colorScheme.surface
@@ -704,6 +769,49 @@ private fun AccentPicker(selected: String, onSelected: (String) -> Unit) {
 }
 
 @Composable
+private fun ServerChoiceRow(selected: String, onSelected: (String) -> Unit) {
+    val options = listOf(
+        "AUTO" to stringResource(R.string.server_auto),
+        "CLOUDFLARE" to stringResource(R.string.server_cloudflare),
+        "HETZNER" to stringResource(R.string.server_hetzner),
+        "OVH" to stringResource(R.string.server_ovh)
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        options.chunked(2).forEach { rowOptions ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                rowOptions.forEach { (id, label) ->
+                    val isSelected = id == selected
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (isSelected) MaterialTheme.colorScheme.primary else glassColor
+                            )
+                            .border(1.dp, glassBorder, RoundedCornerShape(8.dp))
+                            .clickable { onSelected(id) }
+                            .padding(vertical = 9.dp)
+                            .testTag("server_$id"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = label,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onBackground
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun EngineRow(label: String, value: String) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -720,12 +828,13 @@ private fun EngineRow(label: String, value: String) {
     }
 }
 
+@Composable
 private fun networkTypeLabel(type: String): String = when (type) {
-    SpeedMeterService.NETWORK_WIFI -> "Wi-Fi"
-    SpeedMeterService.NETWORK_MOBILE -> "Mobile data"
-    SpeedMeterService.NETWORK_ETHERNET -> "Ethernet"
-    SpeedMeterService.NETWORK_VPN -> "VPN"
-    else -> "Offline"
+    SpeedMeterService.NETWORK_WIFI -> stringResource(R.string.transport_wifi)
+    SpeedMeterService.NETWORK_MOBILE -> stringResource(R.string.transport_mobile_data)
+    SpeedMeterService.NETWORK_ETHERNET -> stringResource(R.string.transport_ethernet)
+    SpeedMeterService.NETWORK_VPN -> stringResource(R.string.transport_vpn)
+    else -> stringResource(R.string.transport_offline)
 }
 
 @Composable
@@ -791,7 +900,7 @@ private fun PermissionRow(
         Spacer(modifier = Modifier.width(8.dp))
         if (active) {
             Text(
-                text = "ACTIVE",
+                text = stringResource(R.string.permission_active),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,

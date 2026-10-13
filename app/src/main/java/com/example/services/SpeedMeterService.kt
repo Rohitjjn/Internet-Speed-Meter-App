@@ -105,6 +105,14 @@ class SpeedMeterService : Service() {
 
     private var networkCallbackRegistered = false
 
+    /** Consecutive FGS timeouts in this process — drives [onTimeout]'s backoff. */
+    @Volatile
+    private var timeoutRestartAttempts = 0
+
+    /** Set once a (re)start lands, so a delayed retry does not stack services. */
+    @Volatile
+    private var timeoutRestarted = false
+
     // ----- daily accounting state -----
     private var hasUsageStatsPermission = false
     private var lastAccountedDay = ""
@@ -115,7 +123,6 @@ class SpeedMeterService : Service() {
     private var integratedMobileTx = 0L
     private var integratedWifiRx = 0L
     private var integratedWifiTx = 0L
-    private var attributedSnapshot: Map<Transport, TransferBytes> = emptyMap()
 
     // ----- status-bar speed icon + notification throttling -----
     private var cachedSpeedIcon: IconCompat? = null
@@ -141,16 +148,25 @@ class SpeedMeterService : Service() {
         private const val READ_INTERVAL_MS = 500L
         private const val ACCOUNTING_PERIOD_MS = 15_000L
 
-        /** Reads without any counter movement before the active source is probed. */
-        private const val STAGNANT_READS = 6
-        /** Minimum reads between two cross-source probes (keeps the loop cheap). */
-        private const val SOURCE_PROBE_EVERY_READS = 4
+        /** First retry delay after an FGS timeout; doubles per consecutive timeout. */
+        private const val TIMEOUT_RESTART_BASE_MS = 5_000L
+        /** Never retry tighter than this, and give up after this many attempts. */
+        private const val TIMEOUT_RESTART_MAX_MS = 120_000L
+        private const val TIMEOUT_RESTART_MAX_ATTEMPTS = 6
 
         private val _liveSpeedFlow = MutableStateFlow(LiveSpeed())
         val liveSpeedFlow: StateFlow<LiveSpeed> = _liveSpeedFlow.asStateFlow()
 
         private val _networkTypeFlow = MutableStateFlow(NETWORK_NONE)
         val networkTypeFlow: StateFlow<String> = _networkTypeFlow.asStateFlow()
+
+        /**
+         * The same information as [networkTypeFlow], typed. The speed test watches this
+         * to abort the moment the transport changes (Wi-Fi → mobile would otherwise bill
+         * the user's data for a download burst).
+         */
+        private val _transportFlow = MutableStateFlow(Transport.NONE)
+        val transportFlow: StateFlow<Transport> = _transportFlow.asStateFlow()
 
         private val _engineStatusFlow = MutableStateFlow(EngineStatus())
         val engineStatusFlow: StateFlow<EngineStatus> = _engineStatusFlow.asStateFlow()
@@ -202,12 +218,16 @@ class SpeedMeterService : Service() {
         registerNetworkCallback()
         pendingTransport = resolveTransport()
         _networkTypeFlow.value = pendingTransport.toNetworkLabel()
+        _transportFlow.value = pendingTransport
         startSpeedTicker()
         startUsageAccounting()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         _isServiceRunning.value = true
+        // A (re)start succeeded, so the FGS-timeout backoff ladder starts over.
+        timeoutRestartAttempts = 0
+        timeoutRestarted = true
         startForegroundWithNotification()
         return START_STICKY
     }
@@ -216,14 +236,39 @@ class SpeedMeterService : Service() {
 
     /**
      * Android 15+ (API 35): dataSync FGS get a 6-hour-per-day budget. When the
-     * budget is exhausted the system calls this. We restart the service to get a
-     * fresh budget; if the OS refuses the background restart we stop cleanly.
+     * budget is exhausted the system calls this.
+     *
+     * Restarting immediately (what this used to do) is a trap on Android 15/16: if the
+     * OS keeps refusing the start, the service spins in a tight loop and burns battery
+     * and the remaining budget for nothing. So the restart is delayed by an exponential
+     * backoff, and after [TIMEOUT_RESTART_MAX_ATTEMPTS] attempts the service stops
+     * cleanly and lets the 60-minute WorkManager watchdog try again instead.
      */
     override fun onTimeout(startId: Int, timeoutType: Int) {
-        try {
-            ContextCompat.startForegroundService(this, Intent(this, SpeedMeterService::class.java))
-        } catch (e: Exception) {
+        val attempt = ++timeoutRestartAttempts
+        if (attempt > TIMEOUT_RESTART_MAX_ATTEMPTS) {
             stopSelf()
+            return
+        }
+        // Cleared until a start actually lands, so a delayed retry can never stack a
+        // second service on top of one that already recovered on its own.
+        timeoutRestarted = false
+        serviceScope.launch {
+            val delayMs = (TIMEOUT_RESTART_BASE_MS shl (attempt - 1).coerceAtMost(4))
+                .coerceAtMost(TIMEOUT_RESTART_MAX_MS)
+            delay(delayMs)
+            // Only retry while this instance is still the one that timed out.
+            if (!timeoutRestarted) {
+                try {
+                    ContextCompat.startForegroundService(
+                        this@SpeedMeterService,
+                        Intent(this@SpeedMeterService, SpeedMeterService::class.java)
+                    )
+                } catch (e: Exception) {
+                    // Background start blocked: stop cleanly, the watchdog will retry.
+                    stopSelf()
+                }
+            }
         }
     }
 
@@ -247,6 +292,8 @@ class SpeedMeterService : Service() {
         serviceJob.cancel()
         _isServiceRunning.value = false
         _liveSpeedFlow.value = LiveSpeed()
+        _transportFlow.value = Transport.NONE
+        _networkTypeFlow.value = NETWORK_NONE
         lastNotificationKey = ""
         cachedSpeedIcon = null
         lastSpeedText = ""
@@ -297,6 +344,7 @@ class SpeedMeterService : Service() {
         // The UI chip updates instantly; the accounting attribution follows within one
         // read interval so the engine is still only ever touched by the read loop.
         _networkTypeFlow.value = transport.toNetworkLabel()
+        _transportFlow.value = transport
     }
 
     private fun resolveTransport(): Transport {
@@ -377,6 +425,7 @@ class SpeedMeterService : Service() {
                     if (resolved != pendingTransport) {
                         pendingTransport = resolved
                         _networkTypeFlow.value = resolved.toNetworkLabel()
+                        _transportFlow.value = resolved
                     }
                 }
 
@@ -388,23 +437,36 @@ class SpeedMeterService : Service() {
                 }
 
                 val reading = TrafficCounterReader.read(source, readAt)
-                if (reading.movedFrom(lastSample)) stagnantReads = 0 else stagnantReads++
+                stagnantReads = if (SourceHealth.progressed(reading, lastSample)) 0 else stagnantReads + 1
+                readsSinceProbe++
 
                 // ---- source health: never keep reading a dead counter ----
-                val unsupported = !reading.isSupported || reading.total <= 0L
-                readsSinceProbe++
-                if ((unsupported || stagnantReads >= STAGNANT_READS) &&
-                    readsSinceProbe >= SOURCE_PROBE_EVERY_READS
+                // The decision itself lives in SourceHealth (pure, unit-tested): it is
+                // throttled and only ever switches on positive evidence from the other
+                // source, which is what stopped the old cross-source flapping.
+                val activeUsable = SourceHealth.isUsable(reading)
+                if (SourceHealth.shouldProbe(
+                        SourceHealth.Symptoms(
+                            activeUsable = activeUsable,
+                            stagnantReads = stagnantReads,
+                            readsSinceProbe = readsSinceProbe
+                        )
+                    )
                 ) {
                     readsSinceProbe = 0
                     val other = TrafficCounterReader.other(source)
                     val otherReading = TrafficCounterReader.read(other, readAt)
-                    val otherMoving = otherReading.movedFrom(shadowSample)
+                    val otherMoving = SourceHealth.progressed(otherReading, shadowSample)
                     shadowSample = otherReading
-                    // Only switch when the other source is genuinely alive: comparing
-                    // absolute totals across two different counters was what made the
-                    // old implementation flap between sources every few seconds.
-                    if (otherMoving || (unsupported && otherReading.total > 0L)) {
+                    if (SourceHealth.decide(
+                            SourceHealth.Evidence(
+                                activeUsable = activeUsable,
+                                otherUsable = SourceHealth.isUsable(otherReading),
+                                otherTotal = otherReading.total,
+                                otherProgressed = otherMoving
+                            )
+                        ) == SourceHealth.Decision.SWITCH
+                    ) {
                         source = other
                         lastSample = otherReading
                         engine.seed(otherReading) // fresh anchor: no cross-source delta
@@ -433,6 +495,7 @@ class SpeedMeterService : Service() {
         // The chip mirrors the transport the OS pushed (the engine catches up within one
         // read interval), so a Wi-Fi ⇄ mobile switch never flickers back to the old value.
         _networkTypeFlow.value = pendingTransport.toNetworkLabel()
+        _transportFlow.value = pendingTransport
         updateNotification(live)
     }
 
@@ -478,7 +541,7 @@ class SpeedMeterService : Service() {
                     integratedWifiTx = row.wifiTx
                 }
             }
-            attributedSnapshot = engine.attributedTotals()
+            engine.drainAttributed() // drop anything attributed before this process started
             _todayUsageFlow.value = buildTodayEntity()
             while (true) {
                 delay(ACCOUNTING_PERIOD_MS)
@@ -529,14 +592,15 @@ class SpeedMeterService : Service() {
             } else wifi
             DataUsageEntity(today, m.rx, m.tx, w.rx, w.tx)
         } else {
-            // Sum up the real bytes the engine attributed to each transport since the
-            // previous pass. `TransportBytes` here is the app's own accumulator type.
-            val totals = engine.attributedTotals()
-            val wifiDelta = deltaOf(totals, attributedSnapshot, Transport.WIFI) +
-                deltaOf(totals, attributedSnapshot, Transport.ETHERNET) +
-                deltaOf(totals, attributedSnapshot, Transport.VPN)
-            val mobileDelta = deltaOf(totals, attributedSnapshot, Transport.MOBILE)
-            attributedSnapshot = totals
+            // Real bytes the engine attributed to each transport since the previous
+            // pass. The engine remembers what it already handed over, so a re-seed in
+            // between (service restart / counter-source switch) contributes nothing
+            // instead of producing a negative or double-counted delta.
+            val delta = engine.drainAttributed()
+            val wifiDelta = (delta[Transport.WIFI] ?: TransferBytes()) +
+                (delta[Transport.ETHERNET] ?: TransferBytes()) +
+                (delta[Transport.VPN] ?: TransferBytes())
+            val mobileDelta = delta[Transport.MOBILE] ?: TransferBytes()
 
             integratedWifiRx += wifiDelta.rx
             integratedWifiTx += wifiDelta.tx
@@ -564,23 +628,6 @@ class SpeedMeterService : Service() {
             preferencesManager.saveLastSpeed(live.steadyDownloadBps, live.steadyUploadBps)
         } catch (e: Exception) {
             e.printStackTrace()
-        }
-    }
-
-    private fun deltaOf(
-        current: Map<Transport, TransferBytes>,
-        previous: Map<Transport, TransferBytes>,
-        transport: Transport
-    ): TransferBytes {
-        val nowBytes = current[transport] ?: TransferBytes()
-        val beforeBytes = previous[transport] ?: TransferBytes()
-        val delta = nowBytes - beforeBytes
-        // A negative delta would mean the engine was re-seeded in between (service
-        // restart / source switch): treat it as "nothing countable" instead of a spike.
-        return if (delta.rx < 0L || delta.tx < 0L) {
-            TransferBytes(nowBytes.rx.coerceAtLeast(0L), nowBytes.tx.coerceAtLeast(0L))
-        } else {
-            delta
         }
     }
 
@@ -622,10 +669,10 @@ class SpeedMeterService : Service() {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Live speed ticker",
+                getString(R.string.notification_channel_name),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Shows real-time internet speed in the status bar."
+                description = getString(R.string.notification_channel_description)
                 setShowBadge(false)
             }
             nm.createNotificationChannel(channel)
@@ -675,20 +722,21 @@ class SpeedMeterService : Service() {
 
     private fun buildSpeedNotification(live: LiveSpeed): Notification {
         val networkLabel = when (live.transport) {
-            Transport.WIFI -> "Wi-Fi"
-            Transport.ETHERNET -> "Ethernet"
-            Transport.VPN -> "VPN"
-            Transport.MOBILE -> "Mobile"
-            Transport.NONE -> "Offline"
+            Transport.WIFI -> getString(R.string.transport_wifi)
+            Transport.ETHERNET -> getString(R.string.transport_ethernet)
+            Transport.VPN -> getString(R.string.transport_vpn)
+            Transport.MOBILE -> getString(R.string.transport_mobile)
+            Transport.NONE -> getString(R.string.transport_offline)
         }
         val todayTotal = _todayUsageFlow.value.total
         val title = "↓ ${SpeedFormatter.format(live.steadyDownloadBps, speedUnit)}  " +
             "↑ ${SpeedFormatter.format(live.steadyUploadBps, speedUnit)}"
         val text = buildString {
-            append(networkLabel)
-            append(" · Today ")
-            append(BytesFormatter.format(todayTotal))
-            if (live.paused) append(" · paused")
+            append(getString(R.string.notification_text, networkLabel, BytesFormatter.format(todayTotal)))
+            if (live.paused) {
+                append(" · ")
+                append(getString(R.string.notification_paused))
+            }
         }
 
         return try {

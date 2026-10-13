@@ -35,6 +35,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val accentKey: StateFlow<String> = preferencesManager.accentKeyFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "INK")
 
+    /** Preferred public endpoint for the active speed test ("AUTO" = shipped order). */
+    val speedTestServer: StateFlow<String> = preferencesManager.speedTestServerFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "AUTO")
+
     fun toggleDarkMode(enabled: Boolean) {
         viewModelScope.launch { preferencesManager.setDarkMode(enabled) }
     }
@@ -49,6 +53,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun updateAccent(key: String) {
         viewModelScope.launch { preferencesManager.setAccentKey(key) }
+    }
+
+    fun updateSpeedTestServer(id: String) {
+        viewModelScope.launch { preferencesManager.setSpeedTestServer(id) }
     }
 
     fun resetTodayUsage() {

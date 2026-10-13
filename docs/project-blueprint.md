@@ -41,7 +41,7 @@ MainActivity (Splash → Intro → Main)
 SpeedMeterService (foreground, dataSync)
 ├── read loop — 500 ms, Dispatchers.Default
 │     TrafficCounterReader: TrafficStats  ⇄  /proc/net/dev   (per-source anchors +
-│     health probe; switch only when the other source is genuinely alive)
+│     SourceHealth: throttled probe + positive-evidence-only switching, pure + tested)
 │     → SpeedEngine (pure maths) → LiveSpeed every ~1 s
 │     → StateFlows: raw dl/ul, steady (EWMA), 1-min average, peaks, history,
 │       session bytes, per-transport rates, transport
@@ -49,14 +49,18 @@ SpeedMeterService (foreground, dataSync)
 ├── ConnectivityManager.NetworkCallback → transport push (+30 s self-heal)
 └── accounting loop — 15 s, Dispatchers.IO
       Usage access ? NetworkStatsManager since midnight − reset baseline
-                   : engine per-transport attribution deltas
+                   : engine.drainAttributed() (engine-owned watermark, never negative)
       → Room upsert(daily_data_usage)
 
 SpeedTestEngine (opt-in, Dispatchers.IO)
+├── server failover: probe Cloudflare → Hetzner → OVH (Settings can pin one first)
 ├── latency: 5 round trips after a warm-up request → min / average / jitter
-├── download: 4 parallel streams, 8 s budget, bytes actually received
-└── upload: 3 parallel chunked POST streams, 6 s budget, bytes accepted by the socket
+├── download: 2 streams to start, ramped to 4 on a proven-fast line, 8 s budget
+└── upload: 2 streams to start, ramped to 3, 6 s budget, server response checked
+   every phase takes an abort signal (transport change) and unwinds instead of
+   billing mobile data for the rest of a burst
    → SpeedTestViewModel → SpeedTestScreen (+ last 20 results in DataStore)
+   → share: plain ACTION_SEND text, no SDK
 
 Supporting
 ├── WorkManager SpeedKeepAliveWorker (60 min) + BootCompletedReceiver
@@ -74,7 +78,7 @@ Supporting
 | Download and upload come from **one coherent `(rx, tx)` read** of **one source**, as two independent deltas | The reported bug "upload and download show the same number" |
 | `rate = bytes ÷ measured elapsed ms` | A late tick must not inflate the rate |
 | Windows > 3 s publish `0` + `paused = true`, and are kept out of history/averages | Honest behaviour after Doze/suspension (but the bytes still count towards the session) |
-| A counter that decreases re-anchors silently | Interface resets / source switches / reboots must never create a spike |
+| A counter that decreases — or jumps by more than 8 GiB in one read — re-anchors silently | Interface resets / source switches / reboots / broken kernel counters must never create a spike |
 | Each counter source keeps its **own** anchor; switching re-seeds the engine | The old cross-source comparison flapped every few seconds |
 | `TrafficStats.UNSUPPORTED` is tracked per direction | A blocked counter is "unmeasurable", not "0 bytes" |
 | Transport is pushed by `NetworkCallback`, re-resolved every 30 s as a fallback | Instant, correct attribution without polling in the hot path |
@@ -91,7 +95,7 @@ Supporting
 | `permissionGrantedFlow` | service | settings badge, dashboard hint |
 | `SpeedTestViewModel.state` / `.history` | viewmodel | Speed Test screen |
 | Room `getDataByDate` / `getAllHistory` / `getThisMonthTotal` | DB | dashboard, history |
-| DataStore flows | PreferencesManager | theme, accent, unit, limit, intro, alerts, last speed |
+| DataStore flows | PreferencesManager | theme, accent, unit, limit, intro, alerts, last speed, test server |
 
 ## UI theme system
 
@@ -108,23 +112,41 @@ Supporting
 
 ## Background / OS compatibility notes
 
-- Android 15+: `dataSync` FGS daily budget → `onTimeout` restart strategy.
+- Android 15+: `dataSync` FGS daily budget → `onTimeout` restarts with an exponential
+  backoff (5 s → 120 s, max 6 attempts) and then defers to the WorkManager watchdog.
+  Restarting instantly was burning the budget in a tight loop when the OS kept refusing.
 - Background FGS start is blocked when the app is stopped → watchdog + boot receiver +
   on-open restart; failures are caught and logged, never crash.
 - Notification icon: white-on-transparent bitmap (alpha = mask), cached per distinct
   speed string; the whole notification is skipped when nothing visible changed.
 - A NetworkCallback may be dropped by some OEM ROMs → the ticker re-resolves the
   transport every 30 s.
+- OEM speed-test note: XIAOMI/OPPO/vivo can kill the foreground service mid-test — every
+  phase is abortable and ends cleanly, so the worst case is a failed test, never a
+  half-measured number.
 - minSdk 24 / targetSdk 36; Gradle 9.8.1 wrapper + AGP 9.1.1 + JDK 17.
+
+## Localization
+
+Every user-visible string lives in `app/src/main/res/values/strings.xml` (198 entries);
+`values-hi` ships Hindi. Proper nouns (Cloudflare/Hetzner/OVH) and unit symbols are
+`translatable="false"`. Format strings use positional specifiers (`%1$s`) and are always
+read through the formatting APIs; code that has no `Context`/`CompositionLocal`
+(`SpeedTestEngine`) throws **marker** messages (`SpeedTestEngine.ABORT_MESSAGE`) that the
+ViewModel maps to a translated string — a raw English message is never shown.
 
 ## Testing
 
-- Pure JVM: `SpeedEngineTest` (the measurement rules above), `ExampleUnitTest`
-  (formatters, bits/bytes modes, `/proc/net/dev` parser, interface classification,
-  jitter, speed-test result serialization), `AccountingTest` (baselines, clamping,
-  rollover).
+- Pure JVM: `SpeedEngineTest` (the measurement rules above, drain-once accounting,
+  implausible-counter guard), `SourceHealthTest` (counter-source switching),
+  `SpeedTestEngineTest` (server failover/ordering, gauge scale, result round-trip),
+  `ExampleUnitTest` (formatters, bits/bytes modes, `/proc/net/dev` parser, interface
+  classification, jitter, speed-test result serialization), `AccountingTest` (baselines,
+  clamping, rollover).
 - Robolectric: `HistoryDatabaseTest` (Room), `DashboardViewModelTest` (state),
-  `DashboardUiSmokeTest` (Compose render of the hero + usage cards).
+  `DashboardUiSmokeTest` (Compose render of the hero + usage cards),
+  `PreferencesManagerTest` (DataStore round-trip for every setting).
+- Instrumented: `SpeedTestSmokeTest` — network-gated, skipped when offline.
 - CI (`.github/workflows/android-build.yml`): unit-test job, non-blocking lint job,
   manual build/release job (see README).
 

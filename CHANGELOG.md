@@ -2,6 +2,80 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-10-13 · loop 3] — speed-test resilience, honest accounting, Hindi
+
+### Fixed — background & OS compliance
+- **`onTimeout` no longer restarts in a tight loop.** On Android 15/16 a `dataSync` FGS
+  that the OS keeps refusing used to be re-requested instantly, burning battery and the
+  remaining daily budget. The restart is now delayed by an exponential backoff
+  (5 s → 10 s → 20 s → 40 s → 80 s, capped at 120 s), gives up after 6 attempts and lets
+  the 60-minute WorkManager watchdog take over; a delayed retry is skipped when a start
+  has already landed.
+
+### Fixed — daily accounting
+- Per-transport byte deltas now come from `SpeedEngine.drainAttributed()`, which owns the
+  "already handed over" watermark, instead of the accounting loop diffing two full map
+  snapshots. A re-seed in between (service restart, counter-source switch, session reset)
+  contributes **nothing** rather than a negative — and therefore spiky — delta.
+- The engine refuses an **implausible counter jump** (more than 8 GiB in one 500 ms read,
+  i.e. faster than any phone radio) exactly like a counter that went backwards: the read
+  is dropped and re-anchored, and the untrustworthy magnitude is kept out of the session
+  totals too.
+
+### Added — active speed test resilience
+- **More than one server.** `speed.cloudflare.com` is blocked by some corporate DNS
+  servers and a few ISPs. The test now probes a candidate list (Cloudflare → Hetzner →
+  OVH) and fails over to the first endpoint that answers a round trip. Settings →
+  **Speed Test Server** pins a preference (`AUTO` keeps the failover order).
+- **Each number says which server produced it.** Some fallback endpoints can only serve
+  downloads, so the result records the download server and the upload server separately
+  and the UI shows both; when nothing reachable can take an upload, upload is reported as
+  *not measured* instead of being invented.
+- **Mobile-data confirmation.** Starting a test on a metered network now asks first:
+  a real throughput test has to move real bytes (typically 10–60 MB) and that comes out
+  of the user's plan. The exact amount the test actually used is shown afterwards.
+- **No connectivity → no test.** The test refuses to start when the device reports no
+  internet instead of failing after 30 s of socket timeouts.
+- **Abort on transport change.** If the OS reports a different transport mid-test
+  (Wi-Fi → mobile data), every phase unwinds and the test stops — the alternative was
+  billing the user's data plan for the rest of a download burst.
+- **Stream ramp-up.** The test opens 2 streams and only adds the rest when the line
+  proves it can use them (≥ 5 Mbit/s measured after 1.5 s), so connection-setup noise no
+  longer pollutes slow-line results. The result reports how many streams actually ran.
+- **Upload honesty.** After the deadline the upload phase reads the server's response: an
+  upload the endpoint rejected is an error, not a throughput number.
+
+### Added — engineering
+- **`SourceHealth`** — the counter-source switch decision extracted out of the 500 ms
+  read loop into a pure, unit-tested helper (throttled probing + positive-evidence-only
+  switching), with 11 new tests.
+- **DataStore round-trip tests** (`PreferencesManagerTest`) for every user setting,
+  including the new server preference and the extended speed-test history record.
+- **`GaugeScale`** — the gauge's fixed ladder (10 Mbit/s → 5 Gbit/s), unit-tested.
+- Instrumented `SpeedTestSmokeTest` (network-gated, skipped when offline) so a breaking
+  change in the public endpoint is caught on a real device.
+
+### Added — UI
+- Gauge rebuilt as an instrument: 51-tick scale, spring-loaded needle sweep, scale end
+  labels, plus the existing progress arc.
+- Phase label **cross-fades**; metric tiles animate when a value lands.
+- **Share result** — a plain `ACTION_SEND` text intent (no SDK, no image) with the real
+  download/upload/ping/jitter, both servers and the measured data cost.
+- Dashboard: **two-column layout above ~600 dp** (tablets/landscape), a breathing dot
+  while the engine is still coming up, and the hero card is de-cluttered (`LAST WINDOW`
+  lives in Settings → Measurement Engine where it belongs).
+- History: **this month vs last month** recap on the pinned monthly card.
+- Settings: **Speed Test Server** picker.
+
+### Added — localization
+- **Hindi (`values-hi`)** — every user-visible string moved out of the Compose sources
+  into `values/strings.xml`, so the app is now translatable without touching Kotlin
+  (198 strings; proper nouns and unit symbols stay untranslated on purpose).
+
+### Fixed — tests
+- `ExampleInstrumentedTest` asserted the Kotlin namespace (`com.example`) instead of the
+  real `applicationId`, so it could never pass on a device.
+
 ## [2026-10-13 · loop 2] — measurement-engine redesign + real speed test
 ### Fixed — "speed not calculated correctly" (the reported bug)
 - **Download and upload can no longer show the same number.** Both are now computed from

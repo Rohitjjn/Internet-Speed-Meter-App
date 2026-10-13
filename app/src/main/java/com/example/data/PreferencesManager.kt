@@ -42,7 +42,15 @@ data class SpeedTestResult(
     val uploadBps: Double,
     val latencyMs: Long,
     val jitterMs: Long,
-    val server: String
+    val server: String,
+    /**
+     * Server that carried the upload. It can differ from [server]: some fallback
+     * endpoints can only serve downloads, and the app reports which server each number
+     * came from instead of silently attributing both to one host.
+     */
+    val uploadServer: String = server,
+    /** Bytes the whole test really moved (download + upload), measured, not estimated. */
+    val bytesUsed: Long = 0L
 ) {
     companion object {
         private const val FIELD_SEPARATOR = '|'
@@ -62,6 +70,10 @@ data class SpeedTestResult(
                 append(it.jitterMs)
                 append(FIELD_SEPARATOR)
                 append(it.server.replace(FIELD_SEPARATOR, ' '))
+                append(FIELD_SEPARATOR)
+                append(it.uploadServer.replace(FIELD_SEPARATOR, ' '))
+                append(FIELD_SEPARATOR)
+                append(it.bytesUsed)
             }
         }
 
@@ -77,7 +89,11 @@ data class SpeedTestResult(
                 val up = parts[2].toDoubleOrNull() ?: continue
                 val latency = parts[3].toLongOrNull() ?: continue
                 val jitter = parts[4].toLongOrNull() ?: continue
-                results += SpeedTestResult(at, down, up, latency, jitter, parts[5])
+                // Fields 7 (upload server) and 8 (bytes used) were added later: entries
+                // written by an older build decode with their defaults.
+                val uploadServer = parts.getOrNull(6)?.takeIf { it.isNotBlank() } ?: parts[5]
+                val bytesUsed = parts.getOrNull(7)?.toLongOrNull() ?: 0L
+                results += SpeedTestResult(at, down, up, latency, jitter, parts[5], uploadServer, bytesUsed)
             }
             return results
         }
@@ -103,6 +119,7 @@ class PreferencesManager(private val context: Context) {
         val KEY_LAST_SPEED_DOWN = longPreferencesKey("last_speed_down")
         val KEY_LAST_SPEED_UP = longPreferencesKey("last_speed_up")
         val KEY_SPEED_TEST_RESULTS = stringPreferencesKey("speed_test_results")
+        val KEY_SPEED_TEST_SERVER = stringPreferencesKey("speed_test_server")
     }
 
     /**
@@ -239,5 +256,18 @@ class PreferencesManager(private val context: Context) {
 
     suspend fun clearSpeedTestResults() {
         context.dataStore.edit { it[KEY_SPEED_TEST_RESULTS] = "" }
+    }
+
+    // ---------- Active speed-test server preference ----------
+
+    /**
+     * Which public endpoint the speed test should prefer. `"AUTO"` tries the shipped
+     * order (Cloudflare → Hetzner → OVH) and fails over; an explicit id pins that server
+     * first (it is still reachability-probed, never trusted blindly).
+     */
+    val speedTestServerFlow: Flow<String> = data.map { it[KEY_SPEED_TEST_SERVER] ?: "AUTO" }
+
+    suspend fun setSpeedTestServer(id: String) {
+        context.dataStore.edit { it[KEY_SPEED_TEST_SERVER] = id }
     }
 }

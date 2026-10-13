@@ -111,8 +111,9 @@ data class LiveSpeed(
  *  - **Real window** — every rate is `bytes / (measured elapsed ms)`, never
  *    `bytes / 1000`.
  *  - **No fake spikes** — a counter that goes *backwards* (interface reset, source
- *    switch, reboot) or a window longer than [maxValidWindowMs] (process frozen by the
- *    OS) publishes `0` instead of a bogus avalanche/average.
+ *    switch, reboot), jumps by more than `maxPlausibleDeltaBytes` in a single read, or a
+ *    window longer than [maxValidWindowMs] (process frozen by the OS) publishes `0`
+ *    instead of a bogus avalanche/average.
  *  - **Real byte accounting** — bytes that moved during a long window are still counted
  *    into the session totals and per-transport totals (they really crossed the wire),
  *    only the *rate* is refused.
@@ -124,7 +125,14 @@ class SpeedEngine(
     private val maxValidWindowMs: Long = 3_000L,
     private val smoothing: Double = 0.5,
     private val averageWindowMs: Long = 60_000L,
-    private val historySize: Int = 60
+    private val historySize: Int = 60,
+    /**
+     * Sanity ceiling for a single counter delta. No phone/tablet radio can move this
+     * many bytes in one 500 ms read (8 GiB ⇒ 16 GB/s ≈ 128 Gbit/s), so a larger jump is
+     * a broken kernel counter, not traffic. The read is refused (and re-anchored) exactly
+     * like a counter that went backwards, instead of publishing a number nobody can trust.
+     */
+    private val maxPlausibleDeltaBytes: Long = 8L * 1024L * 1024L * 1024L
 ) {
 
     private var anchor: SpeedSample? = null
@@ -168,6 +176,13 @@ class SpeedEngine(
      */
     private val attributedTotal = ConcurrentHashMap<Transport, TransferBytes>()
 
+    /**
+     * How much of [attributedTotal] the accounting loop has already taken. Only ever
+     * touched by [drainAttributed] (one reader — the 15 s accounting loop), which is why
+     * the accounting path no longer has to diff two whole snapshots every pass.
+     */
+    private val attributedDrained = ConcurrentHashMap<Transport, TransferBytes>()
+
     private val downloadHistory = ArrayDeque<Long>()
     private val uploadHistory = ArrayDeque<Long>()
     private val averageSamples = ArrayDeque<AverageSample>()
@@ -209,6 +224,7 @@ class SpeedEngine(
         dlRate = 0L
         ulRate = 0L
         attributedTotal.clear()
+        attributedDrained.clear()
         downloadHistory.clear()
         uploadHistory.clear()
         averageSamples.clear()
@@ -259,6 +275,29 @@ class SpeedEngine(
     /** Cumulative bytes attributed per transport since the last [resetSession]. */
     fun attributedTotals(): Map<Transport, TransferBytes> = HashMap(attributedTotal)
 
+    /**
+     * Bytes attributed per transport **since the previous call**, and marks them taken.
+     *
+     * The 15 s accounting loop uses this instead of diffing two full snapshots: the
+     * engine knows exactly what it already handed over, so a re-seed in between can
+     * never produce a negative (or double-counted) delta — it simply contributes nothing
+     * until the counters pass the old watermark again.
+     */
+    fun drainAttributed(): Map<Transport, TransferBytes> {
+        val drained = LinkedHashMap<Transport, TransferBytes>()
+        for ((transport, total) in attributedTotal) {
+            val taken = attributedDrained[transport] ?: TransferBytes()
+            // Clamped at zero: a concurrent resetSession() must never subtract usage.
+            val delta = TransferBytes(
+                rx = (total.rx - taken.rx).coerceAtLeast(0L),
+                tx = (total.tx - taken.tx).coerceAtLeast(0L)
+            )
+            attributedDrained[transport] = total
+            if (!delta.isZero) drained[transport] = delta
+        }
+        return drained
+    }
+
     /** Last published state (used for the notification right after a service start). */
     fun snapshot(): LiveSpeed = current
 
@@ -287,9 +326,13 @@ class SpeedEngine(
         val deltaRx = if (rxMeasurable) sample.rx - previous.rx else 0L
         val deltaTx = if (txMeasurable) sample.tx - previous.tx else 0L
 
-        if (deltaRx < 0L || deltaTx < 0L) {
-            // Counter went backwards: interface reset, source switch or device reboot.
-            // Re-anchor silently — publishing here would be a fabricated spike.
+        if (deltaRx < 0L || deltaTx < 0L ||
+            deltaRx > maxPlausibleDeltaBytes || deltaTx > maxPlausibleDeltaBytes
+        ) {
+            // Counter went backwards (interface reset, source switch, device reboot) or
+            // jumped by an impossible amount (broken kernel counter). Either way the
+            // reading cannot be trusted: re-anchor silently instead of publishing a
+            // fabricated spike.
             pendingRx = 0L
             pendingTx = 0L
             windowAnchorMs = sample.atMs

@@ -31,6 +31,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
 import com.example.R
 import com.example.ui.components.AppBackground
 import com.example.ui.theme.glassBorder
@@ -81,7 +82,7 @@ fun SplashScreen(
                 ) {
                     Image(
                         painter = painterResource(id = R.drawable.ic_network_icon),
-                        contentDescription = "Speed Meter logo",
+                        contentDescription = stringResource(R.string.cd_splash_logo),
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -89,7 +90,7 @@ fun SplashScreen(
                 Spacer(modifier = Modifier.height(22.dp))
 
                 Text(
-                    text = "Speed Meter",
+                    text = stringResource(R.string.splash_title),
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground,
@@ -97,7 +98,7 @@ fun SplashScreen(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "REAL-TIME ENGINE",
+                    text = stringResource(R.string.splash_subtitle),
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,

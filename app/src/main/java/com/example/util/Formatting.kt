@@ -87,6 +87,40 @@ object SpeedFormatter {
     }
 }
 
+/**
+ * The speed-test gauge scale.
+ *
+ * The maximum is picked from a **fixed ladder** instead of being derived from the current
+ * peak: a scale that resized itself on every tick would make the needle meaningless
+ * (it would sit at the same spot no matter how fast the line is). The ladder covers
+ * 10 Mbit/s (a slow mobile line) to 5 Gbit/s (a fast home connection).
+ */
+object GaugeScale {
+
+    /** Bits per second, ascending. The first step that fits the value wins. */
+    private val LADDER_BPS = listOf(
+        10_000_000.0,
+        25_000_000.0,
+        50_000_000.0,
+        100_000_000.0,
+        250_000_000.0,
+        500_000_000.0,
+        1_000_000_000.0,
+        2_500_000_000.0,
+        5_000_000_000.0
+    )
+
+    /**
+     * Smallest ladder step that can display [bitsPerSecond] with a little headroom, or
+     * the top of the ladder when the value is faster than anything we can show.
+     */
+    fun maxBps(bitsPerSecond: Double): Double {
+        val safe = if (bitsPerSecond.isFinite() && bitsPerSecond > 0.0) bitsPerSecond else 0.0
+        val needed = safe * 1.15
+        return LADDER_BPS.firstOrNull { it >= needed } ?: LADDER_BPS.last()
+    }
+}
+
 object BytesFormatter {
 
     /** "1.24 GB" / "38.1 MB" style value. */

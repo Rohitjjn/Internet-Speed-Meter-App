@@ -56,15 +56,31 @@ never tell you the *capacity* of your line. Dashboard → **Test → START TEST*
 for real over the network (plain `HttpURLConnection`, no third-party SDK):
 
 - **Latency + jitter** — 5 round trips after a throw-away warm-up request.
-- **Download** — 4 parallel streams from Cloudflare's public test endpoint for 8 s.
-- **Upload** — 3 parallel chunked POST streams for 6 s.
+- **Download** — parallel streams for 8 s (2 to start, ramped up only on a proven-fast
+  line), counting the bytes that actually arrive.
+- **Upload** — parallel chunked POST streams for 6 s, counting the bytes the socket
+  accepted and then checking the server actually took them.
 - Result = `bits × 8 ÷ seconds`, shown in **Mbps** (the unit ISPs advertise), with the
   last 20 results kept on-device. The divisor is the window that *actually carried data*
   (first byte → deadline) and the live gauge is fed measured intervals too, so TCP/TLS
   setup and coroutine scheduling can never deflate or inflate the number.
 
+**It is built to survive a hostile network.** `speed.cloudflare.com` is blocked by some
+corporate DNS servers and a few ISPs, so the test probes a candidate list (Cloudflare →
+Hetzner → OVH) and fails over to the first endpoint that answers a round trip. Settings →
+**Speed Test Server** pins a preference. Because some fallback endpoints can only serve
+downloads, the result records the **download server and the upload server separately**
+and the UI shows both — when nothing reachable can take an upload, upload is reported as
+*not measured* instead of being invented.
+
+Before running on a metered (mobile-data) connection it asks first: a real throughput
+test has to move real bytes, and the exact amount it used is shown afterwards. It refuses
+to start when the device reports no connectivity, and it **stops the moment the transport
+changes** — a Wi-Fi → mobile switch would otherwise bill your plan for the rest of a
+download burst.
+
 The test runs **only** when you tap the button; it sends no identifiers and stores
-nothing but the four numbers you can see.
+nothing but the numbers you can see.
 
 ### Daily usage ("Mobile today" / "Wi-Fi today")
 
@@ -72,7 +88,9 @@ nothing but the four numbers you can see.
   system-wide per-transport counters via
   `NetworkStatsManager.querySummaryForDevice`, minus the "reset today" baseline.
 - **Without** the permission: the engine's per-read deltas are attributed to the
-  transport that carried them and accumulated — no permission needed.
+  transport that carried them and accumulated — no permission needed. The engine owns the
+  "already handed over" watermark (`drainAttributed()`), so a re-seed in between
+  contributes nothing instead of a negative (and therefore spiky) delta.
 
 ### Verify it yourself
 
@@ -83,19 +101,24 @@ read cadence, last window, session samples, and the kernel interface totals
 ### Background behaviour (Android 15/16)
 
 `dataSync` foreground services get a daily budget. When the system calls
-`onTimeout`, the service restarts itself to get a fresh budget and stops
-cleanly if the OS refuses. A 60-minute WorkManager watchdog
-(`SpeedKeepAliveWorker`) restarts the service if it was killed (e.g. after
-app update / device reboot — the boot receiver restarts it too).
+`onTimeout`, the service schedules a restart **with an exponential backoff**
+(5 s → 120 s, at most 6 attempts) instead of hammering the OS with instant
+restarts, gives up cleanly after that, and lets the 60-minute WorkManager
+watchdog (`SpeedKeepAliveWorker`) take over. The watchdog also restarts the
+service if it was killed (app update / device reboot — the boot receiver
+restarts it too).
 
 ---
 
 ## Features
 
 - ⚡ Live ↓/↑ speed, measured twice a second, with digit-roll animation
-- 🧪 **Active speed test**: ping · jitter · download · upload (Mbps) + result history
+- 🧪 **Active speed test**: ping · jitter · download · upload (Mbps) + result history,
+  multi-server failover, mobile-data warning, shareable result
 - 👥 Per-network split: real bytes attributed to Wi-Fi vs mobile while they happen
 - 📊 Session total, session peak, 1-minute average and 30-second sparkline
+- 🌐 **English + हिन्दी** — every string is an Android resource, so a new language is a
+  new `values-xx/strings.xml` and nothing else
 - 📱 Mobile & Wi-Fi daily usage cards (real counters)
 - 🗓 History (all recorded days, newest first) + pinned monthly total, clear option
 - 🎚 Optional daily mobile **warning** limit (MB/GB) — alerts at 50 % / 90 % / 100 %
@@ -128,10 +151,17 @@ automatically on first sync.
 
 Covers the measurement core without a device: `SpeedEngineTest` (independent
 directions, measured windows, suspended-process guard, counter resets, per-transport
-attribution), `ExampleUnitTest` (formatters, bits/bytes modes, `/proc/net/dev` parser,
+attribution, drain-once accounting, implausible-counter guard), `SourceHealthTest`
+(counter-source switching), `SpeedTestEngineTest` (server failover, gauge scale, result
+round-trip), `ExampleUnitTest` (formatters, bits/bytes modes, `/proc/net/dev` parser,
 jitter, result serialization), `AccountingTest` (reset baselines, clamping, midnight
-rollover), `HistoryDatabaseTest` (Room) and `DashboardUiSmokeTest` (Robolectric Compose
+rollover), `HistoryDatabaseTest` (Room), `PreferencesManagerTest` (DataStore round-trip
+for every setting, under Robolectric) and `DashboardUiSmokeTest` (Robolectric Compose
 render).
+
+The instrumented suite (`./gradlew :app:connectedAndroidTest`) adds
+`SpeedTestSmokeTest`, a **network-gated** real 2-second download against the default
+endpoint — it is skipped (not failed) when the device is offline.
 
 ---
 
@@ -187,10 +217,12 @@ app/src/main/java/com/example/
 │   ├── SpeedMeterService.kt   # 500 ms read loop + 15 s accounting + notification
 │   ├── SpeedEngine.kt         # pure measurement maths (unit-tested, no Android)
 │   ├── TrafficCounterReader.kt# TrafficStats / /proc/net/dev + per-interface parser
-│   ├── SpeedTestEngine.kt     # active ping/download/upload measurement
+│   ├── SpeedTestEngine.kt     # active ping/download/upload (multi-server, abortable)
+│   ├── SourceHealth.kt        # pure counter-source switch decision (unit-tested)
 │   └── ServiceScheduler.kt    # WorkManager keep-alive + boot handling
 └── ui/
     ├── components/            # AppBackground, GlassCard, GlassChip, AppIcon
+    ├── res/values/            # strings.xml (+ values-hi) — all user-visible copy
     ├── screens/               # Dashboard, Speed Test, History, Settings, Intro, Splash
     ├── theme/                 # glass palettes (light + dark), Material 3
     ├── util/                  # secondary()/dlColor()/ulColor()/toBytes()

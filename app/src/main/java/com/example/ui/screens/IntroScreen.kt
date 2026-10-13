@@ -52,6 +52,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.compose.ui.res.stringResource
 import com.example.R
 import com.example.ui.components.AppBackground
 import com.example.ui.components.AppIcon
@@ -147,10 +148,10 @@ fun IntroScreen(
 
             Text(
                 text = when (currentPage) {
-                    0 -> "REAL-TIME SPEED"
-                    1 -> "ACCURATE TRACKING"
-                    2 -> "SYSTEM ACCESS"
-                    else -> "ALMOST READY"
+                    0 -> stringResource(R.string.intro_tag_speed)
+                    1 -> stringResource(R.string.intro_tag_tracking)
+                    2 -> stringResource(R.string.intro_tag_access)
+                    else -> stringResource(R.string.intro_tag_ready)
                 },
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
@@ -163,10 +164,10 @@ fun IntroScreen(
 
             Text(
                 text = when (currentPage) {
-                    0 -> "Live Speed Meter"
-                    1 -> "Data You Can Trust"
-                    2 -> "Enable Core Sensors"
-                    else -> "You're All Set"
+                    0 -> stringResource(R.string.intro_title_speed)
+                    1 -> stringResource(R.string.intro_title_tracking)
+                    2 -> stringResource(R.string.intro_title_access)
+                    else -> stringResource(R.string.intro_title_ready)
                 },
                 fontSize = 26.sp,
                 fontWeight = FontWeight.Bold,
@@ -198,9 +199,9 @@ fun IntroScreen(
             } else {
                 Text(
                     text = when (currentPage) {
-                        0 -> "Watch download & upload speed tick every second — in the app and in your status bar."
-                        1 -> "Real system counters track what you use over Mobile and Wi-Fi, with daily history. No fake numbers."
-                        else -> "The meter keeps running in the background with a live speed ticker. One tap brings it back."
+                        0 -> stringResource(R.string.intro_body_speed)
+                        1 -> stringResource(R.string.intro_body_tracking)
+                        else -> stringResource(R.string.intro_body_ready)
                     },
                     fontSize = 13.5.sp,
                     color = secondary(),
@@ -233,7 +234,7 @@ fun IntroScreen(
                     ) {
                         AppIcon(
                             resId = R.drawable.ic_chevron_left,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.action_back),
                             tint = MaterialTheme.colorScheme.onBackground,
                             modifier = Modifier.size(22.dp)
                         )
@@ -281,7 +282,9 @@ fun IntroScreen(
                         .testTag(if (currentPage < pageCount - 1) "intro_next_button" else "intro_start_button")
                 ) {
                     Text(
-                        text = if (currentPage < pageCount - 1) "NEXT" else "START",
+                        text = stringResource(
+                            if (currentPage < pageCount - 1) R.string.action_next else R.string.action_start
+                        ),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.5.sp
@@ -314,8 +317,10 @@ private fun PermissionsPage(
         ) {
             PermissionTile(
                 iconRes = R.drawable.ic_notifications,
-                title = "Status-bar ticker",
-                subtitle = if (hasNotification) "Visible" else "Shows live speed",
+                title = stringResource(R.string.intro_perm_ticker),
+                subtitle = stringResource(
+                    if (hasNotification) R.string.intro_perm_ticker_active else R.string.intro_perm_ticker_needed
+                ),
                 active = hasNotification,
                 liveColor = liveColor,
                 onGrant = onRequestNotification
@@ -323,8 +328,10 @@ private fun PermissionsPage(
             HorizontalDivider(color = glassBorder.copy(alpha = 0.5f))
             PermissionTile(
                 iconRes = R.drawable.ic_shield,
-                title = "Usage Access",
-                subtitle = if (hasUsage) "Active" else "For exact daily totals",
+                title = stringResource(R.string.permission_usage),
+                subtitle = stringResource(
+                    if (hasUsage) R.string.intro_perm_usage_active else R.string.intro_perm_usage_needed
+                ),
                 active = hasUsage,
                 liveColor = liveColor,
                 onGrant = onRequestUsage
@@ -382,7 +389,7 @@ private fun PermissionTile(
         if (active) {
             AppIcon(
                 resId = R.drawable.ic_check,
-                contentDescription = "Granted",
+                contentDescription = stringResource(R.string.cd_granted),
                 tint = liveColor,
                 modifier = Modifier.size(18.dp)
             )
@@ -397,7 +404,7 @@ private fun PermissionTile(
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 5.dp),
                 modifier = Modifier.height(32.dp)
             ) {
-                Text("GRANT", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.action_grant), fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
     }

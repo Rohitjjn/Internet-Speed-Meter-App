@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.res.stringResource
 import com.example.R
 import com.example.data.DataUsageEntity
 import com.example.ui.components.AppBackground
@@ -60,6 +61,7 @@ fun HistoryScreen(
 ) {
     val historyList by viewModel.historyList.collectAsState()
     val monthlyTotalBytes by viewModel.monthlyTotalBytes.collectAsState()
+    val lastMonthTotalBytes by viewModel.lastMonthTotalBytes.collectAsState()
 
     var showResetConfirmation by remember { mutableStateOf(false) }
     var showPurgeConfirmation by remember { mutableStateOf(false) }
@@ -87,7 +89,7 @@ fun HistoryScreen(
             ) {
                 Column {
                     Text(
-                        text = "HISTORY",
+                        text = stringResource(R.string.history_eyebrow),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.5.sp,
@@ -96,7 +98,7 @@ fun HistoryScreen(
                     )
                     Spacer(modifier = Modifier.height(3.dp))
                     Text(
-                        text = "Usage History",
+                        text = stringResource(R.string.history_title),
                         fontSize = 28.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onBackground
@@ -115,7 +117,7 @@ fun HistoryScreen(
                     ) {
                         AppIcon(
                             resId = R.drawable.ic_restore,
-                            contentDescription = "Reset Today",
+                            contentDescription = stringResource(R.string.cd_reset_today),
                             tint = MaterialTheme.colorScheme.error,
                             modifier = Modifier.size(17.dp)
                         )
@@ -131,7 +133,7 @@ fun HistoryScreen(
                     ) {
                         AppIcon(
                             resId = R.drawable.ic_delete_forever,
-                            contentDescription = "Clear All History",
+                            contentDescription = stringResource(R.string.cd_clear_history),
                             tint = MaterialTheme.colorScheme.onBackground,
                             modifier = Modifier.size(17.dp)
                         )
@@ -142,16 +144,24 @@ fun HistoryScreen(
             if (showResetConfirmation) {
                 AlertDialog(
                     onDismissRequest = { showResetConfirmation = false },
-                    title = { Text("Reset Today's Usage", fontWeight = FontWeight.Bold) },
-                    text = { Text("Today's counters will be set back to zero. This cannot be undone.", color = secondary()) },
+                    title = { Text(stringResource(R.string.dialog_reset_title), fontWeight = FontWeight.Bold) },
+                    text = { Text(stringResource(R.string.dialog_reset_body), color = secondary()) },
                     confirmButton = {
                         TextButton(onClick = {
                             viewModel.resetTodayUsage()
                             showResetConfirmation = false
-                        }) { Text("RESET", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
+                        }) {
+                            Text(
+                                stringResource(R.string.action_reset),
+                                color = MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     },
                     dismissButton = {
-                        TextButton(onClick = { showResetConfirmation = false }) { Text("CANCEL", color = secondary()) }
+                        TextButton(onClick = { showResetConfirmation = false }) {
+                            Text(stringResource(R.string.action_cancel), color = secondary())
+                        }
                     },
                     shape = RoundedCornerShape(24.dp),
                     containerColor = MaterialTheme.colorScheme.surface
@@ -161,16 +171,24 @@ fun HistoryScreen(
             if (showPurgeConfirmation) {
                 AlertDialog(
                     onDismissRequest = { showPurgeConfirmation = false },
-                    title = { Text("Purge History", fontWeight = FontWeight.Bold) },
-                    text = { Text("All stored history will be permanently deleted. This is irreversible.", color = secondary()) },
+                    title = { Text(stringResource(R.string.dialog_purge_title), fontWeight = FontWeight.Bold) },
+                    text = { Text(stringResource(R.string.dialog_purge_body), color = secondary()) },
                     confirmButton = {
                         TextButton(onClick = {
                             viewModel.clearAllHistory()
                             showPurgeConfirmation = false
-                        }) { Text("PURGE ALL", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
+                        }) {
+                            Text(
+                                stringResource(R.string.action_purge_all),
+                                color = MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     },
                     dismissButton = {
-                        TextButton(onClick = { showPurgeConfirmation = false }) { Text("CANCEL", color = secondary()) }
+                        TextButton(onClick = { showPurgeConfirmation = false }) {
+                            Text(stringResource(R.string.action_cancel), color = secondary())
+                        }
                     },
                     shape = RoundedCornerShape(24.dp),
                     containerColor = MaterialTheme.colorScheme.surface
@@ -203,14 +221,14 @@ fun HistoryScreen(
                         }
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "Nothing here yet",
+                            text = stringResource(R.string.history_empty_title),
                             fontSize = 15.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onBackground
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Your real daily usage will appear here as the meter tracks it.",
+                            text = stringResource(R.string.history_empty_body),
                             fontSize = 12.sp,
                             color = secondary()
                         )
@@ -235,7 +253,10 @@ fun HistoryScreen(
             }
 
             // ---------------- Pinned monthly summary ----------------
-            PinnedMonthlySummaryCard(totalBytes = monthlyTotalBytes)
+            PinnedMonthlySummaryCard(
+                totalBytes = monthlyTotalBytes,
+                lastMonthBytes = lastMonthTotalBytes
+            )
         }
     }
 }
@@ -246,7 +267,7 @@ fun HistoryRowItem(
     todayStr: String,
     todayAccent: androidx.compose.ui.graphics.Color
 ) {
-    val dateDisplay = DateFormatter.readable(item.date, todayStr)
+    val dateDisplay = if (isToday) stringResource(R.string.day_today) else DateFormatter.readable(item.date, todayStr)
     val isToday = item.date == todayStr
 
     GlassCard(modifier = Modifier.fillMaxWidth().testTag("history_item_card_${item.date}")) {
@@ -306,7 +327,7 @@ fun HistoryRowItem(
                 ) {
                     AppIcon(
                         resId = R.drawable.ic_cellular,
-                        contentDescription = "Mobile",
+                        contentDescription = stringResource(R.string.cd_mobile),
                         tint = secondary(),
                         modifier = Modifier.size(12.dp)
                     )
@@ -325,7 +346,7 @@ fun HistoryRowItem(
                 ) {
                     AppIcon(
                         resId = R.drawable.ic_wifi,
-                        contentDescription = "Wi-Fi",
+                        contentDescription = stringResource(R.string.cd_wifi),
                         tint = secondary(),
                         modifier = Modifier.size(12.dp)
                     )
@@ -344,10 +365,20 @@ fun HistoryRowItem(
 }
 
 @Composable
-fun PinnedMonthlySummaryCard(totalBytes: Long) {
+fun PinnedMonthlySummaryCard(totalBytes: Long, lastMonthBytes: Long = 0L) {
     val isDark = isDarkModeActive()
     val cardColor = if (isDark) Color(0xFFF2F4F8) else Color(0xFF15181D)
     val onCard = if (isDark) Color(0xFF15181D) else Color(0xFFF5F6F8)
+    val muted = onCard.copy(alpha = 0.55f)
+    // Real comparison, and only when last month actually has data: a fabricated "0 %"
+    // would be worse than no comparison at all.
+    val deltaPercent: Int? = if (lastMonthBytes > 0L) {
+        (((totalBytes - lastMonthBytes).toDouble() / lastMonthBytes.toDouble()) * 100.0)
+            .toInt()
+            .coerceIn(-999, 999)
+    } else {
+        null
+    }
 
     Box(
         modifier = Modifier
@@ -377,20 +408,49 @@ fun PinnedMonthlySummaryCard(totalBytes: Long) {
             ) {
                 Column {
                     Text(
-                        text = "THIS MONTH",
+                        text = stringResource(R.string.history_this_month),
                         fontSize = 9.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.2.sp,
-                        color = onCard.copy(alpha = 0.55f)
+                        color = muted
                     )
                     Spacer(modifier = Modifier.height(3.dp))
                     Text(
-                        text = "Monthly Total",
+                        text = stringResource(R.string.history_monthly_total),
                         fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = onCard
                     )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = if (lastMonthBytes > 0L) {
+                            stringResource(R.string.history_last_month, BytesFormatter.format(lastMonthBytes))
+                        } else {
+                            stringResource(R.string.history_no_last_month)
+                        },
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = muted,
+                        modifier = Modifier.testTag("monthly_last_month_text")
+                    )
+                }
+                if (deltaPercent != null) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(100.dp))
+                            .background(onCard.copy(alpha = 0.10f))
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                            .testTag("monthly_delta_chip")
+                    ) {
+                        Text(
+                            text = if (deltaPercent >= 0) "+$deltaPercent%" else "$deltaPercent%",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            color = onCard
+                        )
+                    }
                 }
                 Text(
                     text = BytesFormatter.format(totalBytes),

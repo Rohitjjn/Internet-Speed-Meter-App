@@ -252,6 +252,71 @@ class SpeedEngineTest {
         assertEquals(20_000L, published!!.steadyDownloadBps)
     }
 
+    // ------------------------------------------------------------- accounting
+
+    @Test
+    fun drainAttributedHandsEachDeltaExactlyOnce() {
+        val engine = engine()
+        run(engine, seconds = 2, rxPerSecond = 100_000L, txPerSecond = 10_000L, transport = Transport.WIFI)
+
+        val first = engine.drainAttributed()
+        assertEquals(200_000L, first[Transport.WIFI]?.rx)
+        assertEquals(20_000L, first[Transport.WIFI]?.tx)
+
+        // Nothing new moved: a second drain must contribute nothing, otherwise every
+        // 15 s accounting pass would double-count the session's bytes.
+        val second = engine.drainAttributed()
+        assertTrue(second.isEmpty())
+
+        run(engine, seconds = 1, rxPerSecond = 50_000L, txPerSecond = 0L, startMs = 2_000L)
+        val third = engine.drainAttributed()
+        assertEquals(50_000L, third[Transport.WIFI]?.rx)
+
+        // …and the cumulative totals the diagnostics panel shows are untouched.
+        assertEquals(250_000L, engine.attributedTotals()[Transport.WIFI]?.rx)
+    }
+
+    @Test
+    fun drainAttributedNeverGoesNegativeAfterASessionReset() {
+        val engine = engine()
+        run(engine, seconds = 2, rxPerSecond = 100_000L, txPerSecond = 0L, transport = Transport.MOBILE)
+        engine.drainAttributed()
+        engine.resetSession(SpeedSample(9_000_000L, 1_000L, 4_000L))
+
+        // The engine's counters restart from zero, so the accounting loop must not see a
+        // "negative usage" delta.
+        val afterReset = engine.drainAttributed()
+        assertTrue(afterReset.isEmpty())
+        run(
+            engine,
+            seconds = 1,
+            rxPerSecond = 10_000L,
+            txPerSecond = 0L,
+            startMs = 4_000L,
+            transport = Transport.MOBILE
+        )
+        assertEquals(10_000L, engine.drainAttributed()[Transport.MOBILE]?.rx)
+    }
+
+    // ------------------------------------------------------- counter sanity
+
+    @Test
+    fun anImplausibleCounterJumpIsRefusedInsteadOfPublished() {
+        val engine = engine()
+        engine.setTransport(Transport.WIFI)
+        engine.seed(SpeedSample(1_000L, 1_000L, 0L))
+
+        // 20 GiB in 500 ms is 40 GB/s — no phone radio can do that, so this is a broken
+        // kernel counter rather than traffic.
+        val published = engine.onSample(SpeedSample(20L * 1024L * 1024L * 1024L, 1_000L, 500L))
+        assertNull("a number nobody can trust must not be published", published)
+        assertEquals(0L, engine.snapshot().sessionRxBytes)
+
+        // Re-anchored: the next real window measures normally again.
+        val next = engine.onSample(SpeedSample(20L * 1024L * 1024L * 1024L + 100_000L, 1_000L, 1_000L))
+        assertEquals(200_000L, next!!.downloadBps) // 100 000 bytes over the 500 ms window
+    }
+
     @Test
     fun transferBytesArithmeticIsSafe() {
         val a = TransferBytes(1_000L, 500L)

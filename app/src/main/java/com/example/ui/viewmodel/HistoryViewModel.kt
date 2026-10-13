@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -23,12 +24,18 @@ class HistoryViewModel(application: Application) : AndroidViewModel(application)
 
     val historyList: StateFlow<List<DataUsageEntity>>
     val monthlyTotalBytes: StateFlow<Long>
+    /** Last calendar month's total — only used for the "vs last month" delta. */
+    val lastMonthTotalBytes: StateFlow<Long>
 
     init {
         val database = AppDatabase.getDatabase(application)
         repository = DataUsageRepository(database.dataUsageDao())
 
-        val currentMonthPrefix = SimpleDateFormat("yyyy-MM", Locale.getDefault()).format(Date()) + "-%"
+        val dateFormat = SimpleDateFormat("yyyy-MM", Locale.getDefault())
+        val currentMonthPrefix = dateFormat.format(Date()) + "-%"
+        val previousMonthPrefix = dateFormat.format(
+            Calendar.getInstance().apply { add(Calendar.MONTH, -1) }.time
+        ) + "-%"
 
         historyList = repository.allHistory.stateIn(
             scope = viewModelScope,
@@ -37,6 +44,13 @@ class HistoryViewModel(application: Application) : AndroidViewModel(application)
         )
 
         monthlyTotalBytes = repository.getThisMonthTotal(currentMonthPrefix)
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = 0L
+            )
+
+        lastMonthTotalBytes = repository.getThisMonthTotal(previousMonthPrefix)
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5000),

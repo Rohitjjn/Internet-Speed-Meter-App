@@ -1,3 +1,255 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  All user-facing copy lives here so the app can be translated without touching Kotlin.
+  `values-hi/strings.xml` is the Hindi (hi-rIN) translation; anything marked
+  translatable="false" is a proper noun or a unit symbol and stays as-is.
+
+  Formatting rules for this file:
+   - Strings with placeholders use positional specifiers (%1$s, %2$d) and are always
+     read through the formatting APIs (stringResource(id, arg) / getString(id, arg)).
+   - A literal percent inside such a string is written %%.
+   - Apostrophes are escaped (\') and ampersands are written &amp;.
+-->
 <resources>
+
+    <!-- ============================ Common ============================ -->
     <string name="app_name">Internet Speed Meter</string>
+
+    <string name="action_ok">OK</string>
+    <string name="action_cancel">CANCEL</string>
+    <string name="action_reset">RESET</string>
+    <string name="action_grant">GRANT</string>
+    <string name="action_save_limit">Save Limit</string>
+    <string name="action_purge">PURGE</string>
+    <string name="action_purge_all">PURGE ALL</string>
+    <string name="action_share">SHARE</string>
+    <string name="action_clear">CLEAR</string>
+    <string name="action_back">Back</string>
+    <string name="action_next">NEXT</string>
+    <string name="action_start">START</string>
+    <string name="action_autostart">Autostart</string>
+    <string name="action_battery">Battery</string>
+
+    <string name="nav_speed">Speed</string>
+    <string name="nav_test">Test</string>
+    <string name="nav_history">History</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- ============================ Splash ============================ -->
+    <string name="splash_title">Speed Meter</string>
+    <string name="splash_subtitle">REAL-TIME ENGINE</string>
+    <string name="cd_splash_logo">Speed Meter logo</string>
+
+    <!-- ============================ Intro ============================ -->
+    <string name="intro_tag_speed">REAL-TIME SPEED</string>
+    <string name="intro_tag_tracking">ACCURATE TRACKING</string>
+    <string name="intro_tag_access">SYSTEM ACCESS</string>
+    <string name="intro_tag_ready">ALMOST READY</string>
+    <string name="intro_title_speed">Live Speed Meter</string>
+    <string name="intro_title_tracking">Data You Can Trust</string>
+    <string name="intro_title_access">Enable Core Sensors</string>
+    <string name="intro_title_ready">You\'re All Set</string>
+    <string name="intro_body_speed">Watch download and upload speed tick every second — in the app and in your status bar.</string>
+    <string name="intro_body_tracking">Real system counters track what you use over Mobile and Wi-Fi, with daily history. No fake numbers.</string>
+    <string name="intro_body_ready">The meter keeps running in the background with a live speed ticker. One tap brings it back.</string>
+    <string name="intro_perm_ticker">Status-bar ticker</string>
+    <string name="intro_perm_ticker_active">Visible</string>
+    <string name="intro_perm_ticker_needed">Shows live speed</string>
+    <string name="intro_perm_usage_active">Active</string>
+    <string name="intro_perm_usage_needed">For exact daily totals</string>
+    <string name="cd_granted">Granted</string>
+
+    <!-- ============================ Dashboard ============================ -->
+    <string name="dashboard_title">Speed</string>
+    <string name="cd_reset_today">Reset Today</string>
+
+    <string name="hero_download">DOWNLOAD</string>
+    <string name="hero_upload">UPLOAD</string>
+    <string name="hero_peak">PEAK %1$s</string>
+    <string name="hero_minute_average">1 MIN AVG</string>
+    <string name="hero_session">THIS SESSION</string>
+    <string name="hero_session_just_started">just started</string>
+    <string name="hero_session_hours">%1$dh %2$dm</string>
+    <string name="hero_session_minutes">%1$dm</string>
+    <string name="hero_last_30_seconds">LAST 30 SECONDS</string>
+    <string name="hero_status_paused">PAUSED — ENGINE SUSPENDED</string>
+    <string name="hero_status_live">REAL-TIME</string>
+    <string name="hero_status_waiting">WAITING FOR ENGINE</string>
+    <string name="cd_network_type">Network type</string>
+    <string name="cd_download">Download</string>
+    <string name="cd_upload">Upload</string>
+
+    <string name="chip_wifi">WI-FI</string>
+    <string name="chip_mobile">MOBILE</string>
+
+    <string name="transport_wifi">Wi-Fi</string>
+    <string name="transport_mobile">Mobile</string>
+    <string name="transport_ethernet">Ethernet</string>
+    <string name="transport_vpn">VPN</string>
+    <string name="transport_offline">Offline</string>
+    <string name="transport_mobile_data">Mobile data</string>
+
+    <string name="usage_mobile">Mobile Data</string>
+    <string name="usage_wifi">Wi-Fi</string>
+    <string name="usage_today">TODAY</string>
+    <string name="usage_down">DOWN</string>
+    <string name="usage_up">UP</string>
+    <string name="usage_download">DOWNLOAD</string>
+    <string name="usage_upload">UPLOAD</string>
+
+    <string name="total_today">TODAY\'S TOTAL</string>
+    <string name="total_limit">MOBILE LIMIT %1$s</string>
+
+    <string name="hint_usage_access">Usage Access</string>
+    <string name="hint_usage_access_body">Live speed works everywhere. Grant Usage Access for exact daily totals.</string>
+    <string name="dialog_reset_title">Reset Today\'s Usage</string>
+    <string name="dialog_reset_body">Today\'s counters will be set back to zero. This cannot be undone.</string>
+
+    <!-- ==================== Daily-limit in-app alert ==================== -->
+    <string name="alert_limit_reached">Daily Mobile Limit Reached!</string>
+    <string name="alert_limit_warning">Mobile Data Warning</string>
+    <string name="alert_body">You have used %1$d%% of your daily mobile data limit.\n\nUsed: %2$s of %3$s %4$s.</string>
+
+    <!-- ========================== Speed test ========================== -->
+    <string name="test_eyebrow">REAL MEASUREMENT</string>
+    <string name="test_title">Speed Test</string>
+    <string name="phase_idle">READY — TAP START</string>
+    <string name="phase_ping">PINGING %1$s</string>
+    <string name="phase_download">MEASURING DOWNLOAD…</string>
+    <string name="phase_upload">MEASURING UPLOAD…</string>
+    <string name="phase_done">TEST COMPLETE</string>
+    <string name="phase_failed">TEST FAILED</string>
+
+    <string name="metric_ping">PING</string>
+    <string name="metric_download">DOWNLOAD</string>
+    <string name="metric_upload">UPLOAD</string>
+
+    <string name="result_latest">LATEST RESULT</string>
+    <string name="result_download_server">Download server</string>
+    <string name="result_upload_server">Upload server</string>
+    <string name="result_jitter">Jitter</string>
+    <string name="result_download">Download</string>
+    <string name="result_upload">Upload</string>
+    <string name="result_data_used">Data used</string>
+    <string name="result_completed">Completed</string>
+    <string name="result_upload_unavailable">not measured — no reachable upload server</string>
+
+    <string name="test_error_title">Could not finish the test</string>
+    <string name="test_error_body">Check your connection and try again.</string>
+    <string name="test_footer">Runs only when you tap the button. No account, no analytics — the test talks to a public speed-test endpoint and nothing else.</string>
+    <string name="test_history">TEST HISTORY</string>
+    <string name="action_stop_test">STOP TEST</string>
+    <string name="action_start_test">START TEST</string>
+    <string name="action_test_again">TEST AGAIN</string>
+
+    <string name="metered_title">This runs on mobile data</string>
+    <string name="metered_body">A full test measures real throughput, so it has to move real bytes — typically 10–60 MB, sometimes more on a fast line. That comes out of your data plan. The exact amount is shown after the test.</string>
+    <string name="action_run_anyway">RUN ANYWAY</string>
+
+    <string name="share_subject">Speed test result</string>
+    <string name="share_chooser">Share result</string>
+    <string name="share_title">Internet Speed Meter — speed test</string>
+    <string name="share_download">Download: %1$s</string>
+    <string name="share_upload">Upload: %1$s</string>
+    <string name="share_ping">Ping: %1$d ms</string>
+    <string name="share_jitter">Jitter: %1$d ms</string>
+    <string name="share_download_server">Download server: %1$s</string>
+    <string name="share_upload_server">Upload server: %1$s</string>
+    <string name="share_data_used">Data used: %1$s</string>
+    <string name="test_aborted">Test stopped — the connection changed</string>
+    <string name="test_no_connection">No internet connection — connect to Wi-Fi or mobile data first.</string>
+    <string name="test_no_server">No test server reachable — check your connection or DNS.</string>
+    <string name="value_not_measured">not measured</string>
+
+    <!-- ============================ History ============================ -->
+    <string name="history_eyebrow">HISTORY</string>
+    <string name="history_title">Usage History</string>
+    <string name="history_this_month">THIS MONTH</string>
+    <string name="history_monthly_total">Monthly Total</string>
+    <string name="history_last_month">Last month %1$s</string>
+    <string name="history_no_last_month">No data for last month yet</string>
+    <string name="history_empty_title">Nothing here yet</string>
+    <string name="history_empty_body">Your real daily usage will appear here as the meter tracks it.</string>
+    <string name="dialog_purge_title">Purge History</string>
+    <string name="dialog_purge_body">All stored history will be permanently deleted. This is irreversible.</string>
+    <string name="cd_mobile">Mobile</string>
+    <string name="cd_wifi">Wi-Fi</string>
+    <string name="cd_clear_history">Clear all history</string>
+    <string name="day_today">Today</string>
+
+    <!-- ============================ Settings ============================ -->
+    <string name="settings_eyebrow">SYSTEM SETTINGS</string>
+    <string name="settings_title">App Preferences</string>
+
+    <string name="section_appearance">APPEARANCE</string>
+    <string name="section_limits">DAILY MOBILE DATA ALERTS</string>
+    <string name="section_test_server">SPEED TEST SERVER</string>
+    <string name="section_permissions">SYSTEM PERMISSIONS</string>
+    <string name="section_background">KEEP RUNNING IN BACKGROUND</string>
+    <string name="section_data">DATA MANAGEMENT</string>
+    <string name="section_engine">MEASUREMENT ENGINE</string>
+    <string name="section_about">ABOUT</string>
+
+    <string name="cd_theme">Theme</string>
+    <string name="setting_dark_mode">Dark Mode</string>
+    <string name="dark_mode_system">Following system</string>
+    <string name="dark_mode_on">Always on</string>
+    <string name="dark_mode_off">Always off</string>
+    <string name="setting_speed_unit">Speed Unit</string>
+    <string name="speed_unit_bytes">KB/s · MB/s — device meter style</string>
+    <string name="speed_unit_bits">Kbps · Mbps — the unit ISPs advertise</string>
+    <string name="setting_accent">Accent</string>
+    <string name="setting_accent_body">Tints the buttons and the selected nav pill.</string>
+
+    <string name="limit_title">Daily Mobile Data Limit</string>
+    <string name="limit_body">Get a prominent on-screen warning at 50, 90 and 100 percent.</string>
+    <string name="limit_placeholder">e.g. 2</string>
+
+    <string name="setting_test_server">Test server</string>
+    <string name="setting_test_server_body">Auto measures against Cloudflare and fails over to another public endpoint if it is blocked by your network.</string>
+    <string name="server_auto">Auto (failover)</string>
+    <string name="server_cloudflare" translatable="false">Cloudflare</string>
+    <string name="server_hetzner" translatable="false">Hetzner</string>
+    <string name="server_ovh" translatable="false">OVH</string>
+
+    <string name="permission_usage">Usage Access</string>
+    <string name="permission_usage_active">Exact system counters active</string>
+    <string name="permission_usage_needed">Needed for exact daily totals</string>
+    <string name="permission_notifications">Notifications</string>
+    <string name="permission_notifications_active">Status-bar ticker visible</string>
+    <string name="permission_notifications_needed">Shows the live speed ticker</string>
+    <string name="permission_active">ACTIVE</string>
+
+    <string name="background_title">Auto Start &amp; Battery</string>
+    <string name="background_body">Some brands kill background apps. Allow both to keep the meter alive 24/7.</string>
+
+    <string name="data_reset_title">Reset Today\'s Usage</string>
+    <string name="data_reset_body">Zero out today\'s counters.</string>
+    <string name="data_purge_title">Purge History</string>
+    <string name="data_purge_body">Delete all stored history permanently.</string>
+
+    <string name="engine_body">Live, straight from the OS counters</string>
+    <string name="engine_interfaces">KERNEL INTERFACES (/proc/net/dev)</string>
+    <string name="engine_footer">These are the raw numbers the meter is built on, so you can verify every value yourself. Nothing here is estimated or simulated.</string>
+    <string name="engine_status">Status</string>
+    <string name="engine_status_running">Running</string>
+    <string name="engine_status_paused">Running (paused)</string>
+    <string name="engine_status_stopped">Stopped</string>
+    <string name="engine_source">Counter source</string>
+    <string name="engine_cadence">Read cadence</string>
+    <string name="engine_cadence_value">500 ms · publish %1$d ms window</string>
+    <string name="engine_samples">Samples this session</string>
+    <string name="engine_network">Network</string>
+    <string name="engine_raw">Raw counters</string>
+    <string name="engine_raw_value">rx %1$s ↓ · tx %2$s ↑</string>
+
+    <string name="about_name">Internet Speed Meter</string>
+    <string name="about_version">Version %1$s · real-time engine</string>
+
+    <!-- ========================== Notification ========================== -->
+    <string name="notification_channel_name">Live speed ticker</string>
+    <string name="notification_channel_description">Shows real-time internet speed in the status bar.</string>
+    <string name="notification_text">%1$s · Today %2$s</string>
+    <string name="notification_paused">paused</string>
+
 </resources>

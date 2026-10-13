@@ -46,11 +46,13 @@ Only the foreground service writes this table (single writer, no contention):
    (stored in DataStore, not the DB), clamps at zero, and upserts the day.
 2. **Usage access not granted** — the read loop (500 ms) hands every real byte delta to
    `SpeedEngine`, which attributes it to the transport that was active while it moved;
-   the 15 s loop takes the per-transport delta since its previous pass and adds it to the
-   in-memory accumulators, then upserts. A negative delta (service restart / source
-   switch re-seeds the engine) is treated as "nothing countable" instead of a spike.
-   Accumulators are re-seeded from the DB row after a service/process restart, and zeroed
-   on midnight rollover or when the row is deleted externally (the "reset today" gesture).
+   the 15 s loop calls `SpeedEngine.drainAttributed()` and adds the result to the
+   in-memory accumulators, then upserts. The engine owns the "already drained" watermark,
+   so a re-seed (service restart / source switch / session reset) contributes **nothing**
+   instead of a negative — and therefore spiky — delta; each component is additionally
+   clamped at zero. Accumulators are re-seeded from the DB row after a service/process
+   restart, and zeroed on midnight rollover or when the row is deleted externally (the
+   "reset today" gesture).
 
 ## DataStore (not SQL, but persisted app state)
 
@@ -67,7 +69,8 @@ File `speed_meter_prefs.preferences_pb` (see `PreferencesManager`):
 | `speed_unit` | String | `BYTES` (KB/s · MB/s, default) or `BITS` (Kbps · Mbps) |
 | `accent_color` | String | `INK` (default) / `GREEN` / `BLUE` / `VIOLET` — glass theme accent |
 | `last_speed_down` + `last_speed_up` | Long/Long | last published (smoothed) speeds in B/s; written every 15 s so the status-bar number is meaningful immediately after a service start |
-| `speed_test_results` | String | last 20 active speed tests, one per line: `epochMillis\|downloadBps\|uploadBps\|latencyMs\|jitterMs\|server` (defensive decode: malformed lines are dropped) |
+| `speed_test_server` | String | `AUTO` (default) / `CLOUDFLARE` / `HETZNER` / `OVH` — preferred endpoint; `AUTO` keeps the shipped failover order, an explicit id is tried first but is still reachability-probed |
+| `speed_test_results` | String | last 20 active speed tests, one per line: `epochMillis\|downloadBps\|uploadBps\|latencyMs\|jitterMs\|server\|uploadServer\|bytesUsed`. Fields 7 and 8 were added later and default to `server` / `0` when decoding older entries (defensive decode: malformed lines are dropped, `\|` inside a server name is replaced on write) |
 
 Reads go through a `catch`-guarded flow, so a corrupt/IO-failing preferences file degrades
 to defaults instead of crashing a collector.

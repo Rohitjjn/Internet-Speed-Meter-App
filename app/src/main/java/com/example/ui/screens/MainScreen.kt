@@ -56,6 +56,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.compose.ui.res.stringResource
 import com.example.R
 import com.example.data.AppDatabase
 import com.example.data.DataUsageRepository
@@ -152,15 +153,22 @@ fun MainScreen() {
             },
             title = {
                 Text(
-                    text = if (level >= 100L) "Daily Mobile Limit Reached!" else "Mobile Data Warning",
+                    text = stringResource(
+                            if (level >= 100L) R.string.alert_limit_reached else R.string.alert_limit_warning
+                        ),
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.error
                 )
             },
             text = {
                 Text(
-                    text = "You have used $level% of your daily mobile data limit.\n\n" +
-                        "Used: ${formatBytesWarning(mobileUsed)} of ${mobileLimit} ${mobileLimitUnit}.",
+                    text = stringResource(
+                            R.string.alert_body,
+                            level,
+                            formatBytesWarning(mobileUsed),
+                            mobileLimit,
+                            mobileLimitUnit
+                        ),
                     color = secondary()
                 )
             },
@@ -176,7 +184,7 @@ fun MainScreen() {
                         contentColor = MaterialTheme.colorScheme.onPrimary
                     )
                 ) {
-                    Text("OK")
+                    Text(stringResource(R.string.action_ok))
                 }
             },
             shape = RoundedCornerShape(24.dp),
@@ -236,10 +244,10 @@ private fun FloatingGlassNavBar(
     onNavigate: (Screen) -> Unit
 ) {
     val items = listOf(
-        Triple(Screen.Dashboard, R.drawable.ic_speed, "Speed"),
-        Triple(Screen.SpeedTest, R.drawable.ic_bolt, "Test"),
-        Triple(Screen.History, R.drawable.ic_history, "History"),
-        Triple(Screen.Settings, R.drawable.ic_settings, "Settings")
+        Triple(Screen.Dashboard, R.drawable.ic_speed, stringResource(R.string.nav_speed)),
+        Triple(Screen.SpeedTest, R.drawable.ic_bolt, stringResource(R.string.nav_test)),
+        Triple(Screen.History, R.drawable.ic_history, stringResource(R.string.nav_history)),
+        Triple(Screen.Settings, R.drawable.ic_settings, stringResource(R.string.nav_settings))
     )
 
     Box(
