@@ -84,8 +84,7 @@ Supporting
 
 | Flow | Owner | Consumers |
 |---|---|---|
-| `liveSpeedFlow` (`LiveSpeed`) | service | dashboard hero, settings diagnostics |
-| `downloadSpeedFlow`, `uploadSpeedFlow`, `steady*Flow`, `average*Flow`, `peak*Flow`, `wifi*/mobile*Flow`, `sessionBytesFlow`, `dlHistoryFlow`, `ulHistoryFlow` | service | mirrored for UI/notification consumers |
+| `liveSpeedFlow` (`LiveSpeed`) | service | dashboard hero, settings diagnostics — the *only* speed surface (the old per-field mirror flows were removed so there is exactly one source of truth) |
 | `networkTypeFlow` | service | network chip, notification, diagnostics |
 | `engineStatusFlow` (`EngineStatus`) | service | Settings → Measurement Engine |
 | `todayUsageFlow` | service | notification |

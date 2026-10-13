@@ -149,51 +149,6 @@ class SpeedMeterService : Service() {
         private val _liveSpeedFlow = MutableStateFlow(LiveSpeed())
         val liveSpeedFlow: StateFlow<LiveSpeed> = _liveSpeedFlow.asStateFlow()
 
-        private val _downloadSpeedFlow = MutableStateFlow(0L) // bytes/sec
-        val downloadSpeedFlow: StateFlow<Long> = _downloadSpeedFlow.asStateFlow()
-
-        private val _uploadSpeedFlow = MutableStateFlow(0L)
-        val uploadSpeedFlow: StateFlow<Long> = _uploadSpeedFlow.asStateFlow()
-
-        private val _steadyDownloadFlow = MutableStateFlow(0L)
-        val steadyDownloadFlow: StateFlow<Long> = _steadyDownloadFlow.asStateFlow()
-
-        private val _steadyUploadFlow = MutableStateFlow(0L)
-        val steadyUploadFlow: StateFlow<Long> = _steadyUploadFlow.asStateFlow()
-
-        private val _averageDownloadFlow = MutableStateFlow(0L)
-        val averageDownloadFlow: StateFlow<Long> = _averageDownloadFlow.asStateFlow()
-
-        private val _averageUploadFlow = MutableStateFlow(0L)
-        val averageUploadFlow: StateFlow<Long> = _averageUploadFlow.asStateFlow()
-
-        private val _wifiDownloadFlow = MutableStateFlow(0L)
-        val wifiDownloadFlow: StateFlow<Long> = _wifiDownloadFlow.asStateFlow()
-
-        private val _wifiUploadFlow = MutableStateFlow(0L)
-        val wifiUploadFlow: StateFlow<Long> = _wifiUploadFlow.asStateFlow()
-
-        private val _mobileDownloadFlow = MutableStateFlow(0L)
-        val mobileDownloadFlow: StateFlow<Long> = _mobileDownloadFlow.asStateFlow()
-
-        private val _mobileUploadFlow = MutableStateFlow(0L)
-        val mobileUploadFlow: StateFlow<Long> = _mobileUploadFlow.asStateFlow()
-
-        private val _sessionBytesFlow = MutableStateFlow(0L)
-        val sessionBytesFlow: StateFlow<Long> = _sessionBytesFlow.asStateFlow()
-
-        private val _dlHistoryFlow = MutableStateFlow<List<Long>>(emptyList())
-        val dlHistoryFlow: StateFlow<List<Long>> = _dlHistoryFlow.asStateFlow()
-
-        private val _ulHistoryFlow = MutableStateFlow<List<Long>>(emptyList())
-        val ulHistoryFlow: StateFlow<List<Long>> = _ulHistoryFlow.asStateFlow()
-
-        private val _peakDownloadFlow = MutableStateFlow(0L) // bytes/sec, this session
-        val peakDownloadFlow: StateFlow<Long> = _peakDownloadFlow.asStateFlow()
-
-        private val _peakUploadFlow = MutableStateFlow(0L)
-        val peakUploadFlow: StateFlow<Long> = _peakUploadFlow.asStateFlow()
-
         private val _networkTypeFlow = MutableStateFlow(NETWORK_NONE)
         val networkTypeFlow: StateFlow<String> = _networkTypeFlow.asStateFlow()
 
@@ -291,8 +246,6 @@ class SpeedMeterService : Service() {
         unregisterNetworkCallback()
         serviceJob.cancel()
         _isServiceRunning.value = false
-        _downloadSpeedFlow.value = 0L
-        _uploadSpeedFlow.value = 0L
         _liveSpeedFlow.value = LiveSpeed()
         lastNotificationKey = ""
         cachedSpeedIcon = null
@@ -477,21 +430,6 @@ class SpeedMeterService : Service() {
 
     private fun publishLive(live: LiveSpeed) {
         _liveSpeedFlow.value = live
-        _downloadSpeedFlow.value = live.downloadBps
-        _uploadSpeedFlow.value = live.uploadBps
-        _steadyDownloadFlow.value = live.steadyDownloadBps
-        _steadyUploadFlow.value = live.steadyUploadBps
-        _averageDownloadFlow.value = live.averageDownloadBps
-        _averageUploadFlow.value = live.averageUploadBps
-        _wifiDownloadFlow.value = live.wifiDownloadBps
-        _wifiUploadFlow.value = live.wifiUploadBps
-        _mobileDownloadFlow.value = live.mobileDownloadBps
-        _mobileUploadFlow.value = live.mobileUploadBps
-        _sessionBytesFlow.value = live.sessionBytes
-        _dlHistoryFlow.value = live.downloadHistory
-        _ulHistoryFlow.value = live.uploadHistory
-        _peakDownloadFlow.value = live.peakDownloadBps
-        _peakUploadFlow.value = live.peakUploadBps
         // The chip mirrors the transport the OS pushed (the engine catches up within one
         // read interval), so a Wi-Fi ⇄ mobile switch never flickers back to the old value.
         _networkTypeFlow.value = pendingTransport.toNetworkLabel()

@@ -35,6 +35,9 @@ All notable changes to this project will be documented in this file.
   app still never blocks or caps data.
 - `metadata.json` description/capabilities updated to match the app (no unimplemented
   capability is advertised).
+- Removed the 15 per-field mirror flows (`downloadSpeedFlow`, `steady*Flow`, `average*Flow`,
+  `peak*Flow`, `wifi*/mobile*Flow`, `sessionBytesFlow`, `dlHistoryFlow`, `ulHistoryFlow`)
+  that only duplicated `liveSpeedFlow` — one source of truth for every consumer.
 
 ### Added
 - **`SpeedEngine`** — the measurement core extracted into pure, dependency-free Kotlin
