@@ -63,6 +63,24 @@ val glassBorder: Color
 val glassHighlight: Color
     @Composable get() = LocalGlassHighlight.current
 
+/**
+ * User-selectable accent for the glass theme.
+ *
+ * Persisted as its [key] string, so the data layer never has to know about UI types;
+ * [fromKey] degrades to [INK] for anything unknown (old installs, corrupted prefs).
+ */
+enum class AccentTheme(val key: String) {
+    INK("INK"),
+    GREEN("GREEN"),
+    BLUE("BLUE"),
+    VIOLET("VIOLET");
+
+    companion object {
+        fun fromKey(key: String?): AccentTheme =
+            entries.firstOrNull { it.key == key } ?: INK
+    }
+}
+
 @Composable
 fun MyApplicationTheme(
     darkTheme: Boolean,

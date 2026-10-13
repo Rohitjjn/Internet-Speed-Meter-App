@@ -51,7 +51,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.DialogProperties
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -121,8 +120,9 @@ fun MainScreen() {
         if (mobileLimitUnit.uppercase(Locale.ROOT) == "GB") 1024L * 1024L * 1024L else 1024L * 1024L
     val mobileLimitBytes = (mobileLimit * factorMobile).toLong()
 
-    var pendingMobileAlert: Long? = null
-    if (mobileLimitBytes > 0) {
+    // Which warning level (if any) is due right now. Kept as a `val` on purpose: a `val`
+    // keeps its non-null smart cast inside the dialog lambdas, a captured `var` does not.
+    val pendingMobileAlert: Long? = if (mobileLimitBytes > 0) {
         val pct = (mobileUsed.toDouble() / mobileLimitBytes.toDouble()) * 100.0
         val targetAlertLevel = when {
             pct >= 100.0 -> 100L
@@ -130,9 +130,9 @@ fun MainScreen() {
             pct >= 50.0 -> 50L
             else -> 0L
         }
-        if (targetAlertLevel > effectiveDismissedMobile) {
-            pendingMobileAlert = targetAlertLevel
-        }
+        if (targetAlertLevel > effectiveDismissedMobile) targetAlertLevel else null
+    } else {
+        null
     }
 
     LaunchedEffect(pendingMobileAlert) {
@@ -140,20 +140,26 @@ fun MainScreen() {
         vibrateLimitAlert(context, level)
     }
 
-    if (pendingMobileAlert != null) {
+    // `level` is a non-null lambda parameter, so the dialog lambdas need no smart cast.
+    pendingMobileAlert?.let { level ->
         AlertDialog(
-            onDismissRequest = { /* Non-dismissible: user must acknowledge */ },
-            properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+            // Swiping it away counts as acknowledgement: the warning is repeated at most
+            // once per threshold per day, and the app must never trap the user in a modal.
+            onDismissRequest = {
+                scope.launch {
+                    preferencesManager.saveDismissedMobileAlert(level, todayString)
+                }
+            },
             title = {
                 Text(
-                    text = if (pendingMobileAlert >= 100L) "Daily Mobile Limit Reached!" else "Mobile Data Warning",
+                    text = if (level >= 100L) "Daily Mobile Limit Reached!" else "Mobile Data Warning",
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.error
                 )
             },
             text = {
                 Text(
-                    text = "You have used ${pendingMobileAlert}% of your daily mobile data limit.\n\n" +
+                    text = "You have used $level% of your daily mobile data limit.\n\n" +
                         "Used: ${formatBytesWarning(mobileUsed)} of ${mobileLimit} ${mobileLimitUnit}.",
                     color = secondary()
                 )
@@ -162,7 +168,7 @@ fun MainScreen() {
                 Button(
                     onClick = {
                         scope.launch {
-                            preferencesManager.saveDismissedMobileAlert(pendingMobileAlert, todayString)
+                            preferencesManager.saveDismissedMobileAlert(level, todayString)
                         }
                     },
                     colors = ButtonDefaults.buttonColors(

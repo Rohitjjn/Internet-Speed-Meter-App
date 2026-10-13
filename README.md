@@ -46,6 +46,8 @@ Rules the engine guarantees (all covered by tests in `SpeedEngineTest`):
   Wi-Fi/mobile/Ethernet/VPN changes; the hot path does zero binder calls.
 - **Session + rolling stats**: session rx/tx, session duration, peaks, a 60 s average and
   a 60-sample sparkline history.
+- **Displayed digits are rounded, not chopped**: `512.9 KB/s` shows as `513 KB/s`, and
+  hero values print one decimal with a pointless `.0` trimmed (`104.9 Mbps`, `256 MB/s`).
 
 ### 2. Active speed test (opt-in, one tap)
 
@@ -57,7 +59,9 @@ for real over the network (plain `HttpURLConnection`, no third-party SDK):
 - **Download** — 4 parallel streams from Cloudflare's public test endpoint for 8 s.
 - **Upload** — 3 parallel chunked POST streams for 6 s.
 - Result = `bits × 8 ÷ seconds`, shown in **Mbps** (the unit ISPs advertise), with the
-  last 20 results kept on-device.
+  last 20 results kept on-device. The divisor is the window that *actually carried data*
+  (first byte → deadline) and the live gauge is fed measured intervals too, so TCP/TLS
+  setup and coroutine scheduling can never deflate or inflate the number.
 
 The test runs **only** when you tap the button; it sends no identifiers and stores
 nothing but the four numbers you can see.

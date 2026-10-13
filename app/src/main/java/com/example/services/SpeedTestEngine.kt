@@ -130,7 +130,12 @@ object SpeedTestEngine {
         coroutineScope {
             val counter = AtomicLong(0L)
             val startNs = System.nanoTime()
+            // Timestamp of the very first byte that actually arrived. Throughput is
+            // averaged over (first byte → deadline), so the TCP/TLS ramp-up cannot
+            // deflate the measured speed.
+            val firstByteNs = AtomicLong(0L)
             var lastBytes = 0L
+            var lastProgressNs = startNs
 
             val jobs = (0 until streams).map { index ->
                 async(Dispatchers.IO) {
@@ -153,6 +158,9 @@ object SpeedTestEngine {
                                         -1
                                     }
                                     if (read <= 0) break
+                                    if (firstByteNs.get() == 0L) {
+                                        firstByteNs.compareAndSet(0L, System.nanoTime())
+                                    }
                                     counter.addAndGet(read.toLong())
                                 }
                             }
@@ -169,20 +177,29 @@ object SpeedTestEngine {
 
             while (elapsedMs(startNs) < durationMs) {
                 delay(PROGRESS_INTERVAL_MS)
+                val nowNs = System.nanoTime()
                 val bytes = counter.get()
                 val fraction = (elapsedMs(startNs).toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-                onProgress(slidingBitsPerSecond(bytes - lastBytes), fraction)
+                onProgress(bitsOver(bytes - lastBytes, nowNs - lastProgressNs), fraction)
                 lastBytes = bytes
+                lastProgressNs = nowNs
             }
 
-            val measuredMs = elapsedMs(startNs).coerceAtLeast(1L)
+            val endNs = System.nanoTime()
+            val measuredMs = ((endNs - startNs) / 1_000_000L).coerceAtLeast(1L)
             jobs.forEach { it.cancel() }
             val bytes = counter.get()
             if (bytes <= 0L) throw IOException("Download failed — the test server sent no data")
+            val firstNs = firstByteNs.get()
+            val activeMs = if (firstNs > 0L) {
+                ((endNs - firstNs) / 1_000_000L).coerceAtLeast(1L)
+            } else {
+                measuredMs
+            }
             ThroughputResult(
-                bitsPerSecond = bytes * 8.0 / (measuredMs / 1000.0),
+                bitsPerSecond = bytes * 8.0 / (activeMs / 1000.0),
                 bytes = bytes,
-                durationMs = measuredMs,
+                durationMs = activeMs,
                 streams = streams
             )
         }
@@ -200,7 +217,9 @@ object SpeedTestEngine {
         coroutineScope {
             val counter = AtomicLong(0L)
             val startNs = System.nanoTime()
+            val firstByteNs = AtomicLong(0L)
             var lastBytes = 0L
+            var lastProgressNs = startNs
             val payload = ByteArray(BUFFER_SIZE)
 
             val jobs = (0 until streams).map {
@@ -219,6 +238,9 @@ object SpeedTestEngine {
                         connection.outputStream.use { output ->
                             while (isActive && elapsedMs(startNs) < durationMs) {
                                 output.write(payload)
+                                if (firstByteNs.get() == 0L) {
+                                    firstByteNs.compareAndSet(0L, System.nanoTime())
+                                }
                                 counter.addAndGet(payload.size.toLong())
                             }
                             runCatching { output.flush() }
@@ -234,28 +256,42 @@ object SpeedTestEngine {
 
             while (elapsedMs(startNs) < durationMs) {
                 delay(PROGRESS_INTERVAL_MS)
+                val nowNs = System.nanoTime()
                 val bytes = counter.get()
                 val fraction = (elapsedMs(startNs).toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-                onProgress(slidingBitsPerSecond(bytes - lastBytes), fraction)
+                onProgress(bitsOver(bytes - lastBytes, nowNs - lastProgressNs), fraction)
                 lastBytes = bytes
+                lastProgressNs = nowNs
             }
 
-            val measuredMs = elapsedMs(startNs).coerceAtLeast(1L)
+            val endNs = System.nanoTime()
+            val measuredMs = ((endNs - startNs) / 1_000_000L).coerceAtLeast(1L)
             jobs.forEach { it.cancel() }
             val bytes = counter.get()
             if (bytes <= 0L) throw IOException("Upload failed — nothing could be sent")
+            val firstNs = firstByteNs.get()
+            val activeMs = if (firstNs > 0L) {
+                ((endNs - firstNs) / 1_000_000L).coerceAtLeast(1L)
+            } else {
+                measuredMs
+            }
             ThroughputResult(
-                bitsPerSecond = bytes * 8.0 / (measuredMs / 1000.0),
+                bitsPerSecond = bytes * 8.0 / (activeMs / 1000.0),
                 bytes = bytes,
-                durationMs = measuredMs,
+                durationMs = activeMs,
                 streams = streams
             )
         }
     }
 
-    private fun slidingBitsPerSecond(bytesInInterval: Long): Double {
-        if (bytesInInterval <= 0L) return 0.0
-        return bytesInInterval * 8.0 / (PROGRESS_INTERVAL_MS / 1000.0)
+    /**
+     * Bits/second over a *measured* interval. The progress tick assumes nothing about
+     * the delay (a busy device can take longer than [PROGRESS_INTERVAL_MS] to come back),
+     * so the gauge is never fed a fabricated interval.
+     */
+    private fun bitsOver(bytesInInterval: Long, intervalNs: Long): Double {
+        if (bytesInInterval <= 0L || intervalNs <= 0L) return 0.0
+        return bytesInInterval * 8.0 / (intervalNs / 1_000_000_000.0)
     }
 
     private fun elapsedMs(startNs: Long): Long = (System.nanoTime() - startNs) / 1_000_000L

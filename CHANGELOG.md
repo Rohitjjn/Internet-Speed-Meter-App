@@ -22,6 +22,20 @@ All notable changes to this project will be documented in this file.
 - `TrafficStats` `UNSUPPORTED` (`-1`) counters are detected per direction instead of
   silently becoming "0 bytes".
 
+### Hardened in the same loop (self-review pass)
+- `SpeedEngine`'s per-transport byte map is a `ConcurrentHashMap` and the published
+  snapshot is `@Volatile`: the 15 s accounting coroutine reads them while the read loop
+  writes, so a concurrent read can no longer throw or see a torn value.
+- Active test: throughput is averaged over the interval that carried data (first byte →
+  deadline) and progress ticks use *measured* intervals — the TCP/TLS handshake no longer
+  drags the result down by a few percent, which matters when comparing with other meters.
+- Status-bar icon text is sized for 4-character values (`104.9`), and `SpeedFormatter` no
+  longer truncates (512.9 KB/s → 513 KB/s) — every visible digit is now rounded, not cut.
+- The daily-limit warning can be dismissed (back press / outside tap = acknowledge); the
+  app still never blocks or caps data.
+- `metadata.json` description/capabilities updated to match the app (no unimplemented
+  capability is advertised).
+
 ### Added
 - **`SpeedEngine`** — the measurement core extracted into pure, dependency-free Kotlin
   with 15 unit tests (`SpeedEngineTest`) covering directions, windows, suspension,

@@ -3,6 +3,7 @@ package com.example.util
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToLong
 
 /**
  * Display unit for live speeds.
@@ -42,34 +43,31 @@ object SpeedFormatter {
             SpeedUnit.BYTES -> {
                 val kb = safe / 1024.0
                 if (kb >= 1024.0) {
-                    val mb = kb / 1024.0
-                    val number = if (mb >= 100.0) {
-                        String.format(Locale.US, "%.0f", mb)
-                    } else {
-                        String.format(Locale.US, "%.1f", mb)
-                    }
-                    number to "MB/s"
+                    decimal(kb / 1024.0) to "MB/s"
                 } else {
-                    kb.toInt().toString() to "KB/s"
+                    // Rounded, not truncated: a meter that says 512 while 512.9 KB crossed
+                    // the wire is showing a wrong number.
+                    kb.roundToLong().toString() to "KB/s"
                 }
             }
             SpeedUnit.BITS -> {
                 // Decimal (1000-based) kilobits/megabits — the unit ISPs advertise.
                 val kbps = safe * 8.0 / 1000.0
                 if (kbps >= 1000.0) {
-                    val mbps = kbps / 1000.0
-                    val number = if (mbps >= 100.0) {
-                        String.format(Locale.US, "%.0f", mbps)
-                    } else {
-                        String.format(Locale.US, "%.1f", mbps)
-                    }
-                    number to "Mbps"
+                    decimal(kbps / 1000.0) to "Mbps"
                 } else {
-                    kbps.toInt().toString() to "Kbps"
+                    kbps.roundToLong().toString() to "Kbps"
                 }
             }
         }
     }
+
+    /**
+     * One decimal, but never a pointless trailing ".0" — "104.9", "100", "2.5".
+     * Used for every hero/gauge number so the digits stay readable at any magnitude.
+     */
+    private fun decimal(value: Double): String =
+        String.format(Locale.US, "%.1f", value).removeSuffix(".0")
 
     /** "99.2 Mbps" style value straight from a bits-per-second measurement. */
     fun formatBits(bitsPerSecond: Double): String {
@@ -82,15 +80,9 @@ object SpeedFormatter {
         val safe = if (bitsPerSecond > 0.0) bitsPerSecond else 0.0
         val kbps = safe / 1000.0
         return if (kbps >= 1000.0) {
-            val mbps = kbps / 1000.0
-            val number = if (mbps >= 100.0) {
-                String.format(Locale.US, "%.0f", mbps)
-            } else {
-                String.format(Locale.US, "%.1f", mbps)
-            }
-            number to "Mbps"
+            decimal(kbps / 1000.0) to "Mbps"
         } else {
-            kbps.toInt().toString() to "Kbps"
+            kbps.roundToLong().toString() to "Kbps"
         }
     }
 }
