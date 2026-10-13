@@ -245,7 +245,7 @@ class SpeedMeterService : Service() {
                             CounterSource.TRAFFIC_STATS
                         }
                         val otherSample = TrafficCounterReader.read(other)
-                        if (otherSample.movedFrom(lastSample) || (!lastSample.total > 0L && !otherSample.isZero)) {
+                        if (otherSample.movedFrom(lastSample) || (lastSample.total <= 0L && !otherSample.isZero)) {
                             activeSource = other
                             lastSample = otherSample
                             stagnantTicks = 0
