@@ -3,6 +3,7 @@ package com.example.util
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
 /**
@@ -104,16 +105,31 @@ object BytesFormatter {
 
 object DateFormatter {
 
+    /**
+     * The **storage key** of a day (`daily_data_usage.date`, the reset baseline, the
+     * month prefix of the recap query). Always Latin digits via [Locale.US]: a device
+     * locale with its own numbering system (Marathi, Nepali, Arabic, …) would otherwise
+     * write `२०२६-१०-१४`, and the rows written before and after a language change would
+     * never match again. Display formats below stay in the user's locale.
+     */
     fun day(date: Date = Date()): String =
-        SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(date)
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).format(date)
+
+    /** `yyyy-MM` key prefix used by the monthly recap queries. */
+    fun monthPrefix(date: Date = Date()): String =
+        SimpleDateFormat("yyyy-MM", Locale.US).format(date)
 
     fun shortDay(date: Date = Date()): String =
         SimpleDateFormat("EEE, MMM d", Locale.getDefault()).format(date)
 
-    fun readable(dateStr: String, todayStr: String): String {
-        if (dateStr == todayStr) return "Today"
+    /**
+     * Human date for a stored key; [todayLabel] is the localized word shown for today's
+     * row (resources are not reachable from this pure helper).
+     */
+    fun readable(dateStr: String, todayStr: String, todayLabel: String = "Today"): String {
+        if (dateStr == todayStr) return todayLabel
         return try {
-            val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(dateStr)
+            val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(dateStr)
             if (date != null) {
                 SimpleDateFormat("EEE, MMM d, yyyy", Locale.getDefault()).format(date)
             } else {
@@ -122,5 +138,22 @@ object DateFormatter {
         } catch (e: Exception) {
             dateStr
         }
+    }
+}
+
+/**
+ * Percentage comparisons used by the "vs last test" / "vs last month" chips. Pure maths
+ * over two real values — the caller renders the localized label.
+ */
+object DeltaMath {
+    /**
+     * Signed, rounded percentage change of [current] against [previous], or `null` when
+     * there is no usable baseline (no previous value, or a non-finite input).
+     */
+    fun percentChange(current: Double, previous: Double): Int? {
+        if (previous <= 0.0 || !current.isFinite() || !previous.isFinite()) return null
+        val change = (current - previous) / previous * 100.0
+        if (!change.isFinite()) return null
+        return change.roundToInt()
     }
 }

@@ -28,7 +28,6 @@ import com.example.ui.theme.LightGlowViolet
 import com.example.ui.theme.glassBorder
 import com.example.ui.theme.glassColor
 import com.example.ui.theme.glassHighlight
-import androidx.compose.foundation.isSystemInDarkTheme
 import com.example.ui.theme.isDarkModeActive
 
 /**
@@ -40,9 +39,12 @@ import com.example.ui.theme.isDarkModeActive
 @Composable
 fun AppBackground(modifier: Modifier = Modifier) {
     Box(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        val blue = if (isDarkModeActive()) DarkGlowBlue else LightGlowBlue
-        val violet = if (isSystemInDarkTheme()) DarkGlowViolet else LightGlowViolet
-        val mint = if (isSystemInDarkTheme()) DarkGlowMint else LightGlowMint
+        // All three glows follow the *effective* theme (the user's override included) —
+        // mixing in the system setting here painted light glows on a dark background.
+        val dark = isDarkModeActive()
+        val blue = if (dark) DarkGlowBlue else LightGlowBlue
+        val violet = if (dark) DarkGlowViolet else LightGlowViolet
+        val mint = if (dark) DarkGlowMint else LightGlowMint
 
         Box(
             Modifier

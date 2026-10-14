@@ -63,6 +63,23 @@ class SpeedTestEngineInstrumentedTest {
     }
 
     @Test
+    fun uploadIsAcknowledgedByTheServerBeforeItIsMeasured() = runBlocking {
+        requireNetwork()
+        val result = withTimeoutOrNull(30_000L) {
+            SpeedTestEngine.measureUpload(
+                server = SpeedTestServers.CLOUDFLARE,
+                durationMs = 1_000L,
+                streams = 1
+            )
+        }
+        assertNotNull("The upload endpoint did not answer within 30 s", result)
+        // The 32 KiB verification body must be read completely and answered with a 2xx/3xx,
+        // otherwise the engine throws instead of measuring how fast a proxy discards bytes.
+        assertTrue("Upload must be acknowledged by the server", result!!.serverAckCode in 200..399)
+        assertTrue("No bytes were sent to the test endpoint", result.bytes > 0L)
+    }
+
+    @Test
     fun anAbortedRunStopsInsteadOfReportingANumber() = runBlocking {
         requireNetwork()
         val abort = TestAbortSignal()

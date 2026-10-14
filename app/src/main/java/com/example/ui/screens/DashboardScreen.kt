@@ -3,7 +3,11 @@ package com.example.ui.screens
 import android.content.Intent
 import android.provider.Settings
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -45,6 +49,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -131,7 +140,7 @@ fun DashboardScreen(
             ) {
                 Column {
                     Text(
-                        text = "Speed",
+                        text = stringResource(R.string.dashboard_title),
                         fontSize = 28.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onBackground
@@ -153,7 +162,7 @@ fun DashboardScreen(
                 ) {
                     AppIcon(
                         resId = R.drawable.ic_restore,
-                        contentDescription = "Reset Today",
+                        contentDescription = stringResource(R.string.a11y_reset_today),
                         tint = AccentDanger,
                         modifier = Modifier.size(18.dp)
                     )
@@ -185,13 +194,13 @@ fun DashboardScreen(
                         // ---------------- Mobile / WiFi cards ----------------
                         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                             UsageCard(
-                                title = "Mobile Data",
+                                title = stringResource(R.string.usage_mobile_title),
                                 iconRes = R.drawable.ic_cellular,
                                 data = mobileUsage,
                                 modifier = Modifier.weight(1f).testTag("mobile_data_card")
                             )
                             UsageCard(
-                                title = "Wi-Fi",
+                                title = stringResource(R.string.network_wifi),
                                 iconRes = R.drawable.ic_wifi,
                                 data = wifiUsage,
                                 modifier = Modifier.weight(1f).testTag("wifi_data_card")
@@ -219,13 +228,13 @@ fun DashboardScreen(
                 // ---------------- Mobile / WiFi cards ----------------
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     UsageCard(
-                        title = "Mobile Data",
+                        title = stringResource(R.string.usage_mobile_title),
                         iconRes = R.drawable.ic_cellular,
                         data = mobileUsage,
                         modifier = Modifier.weight(1f).testTag("mobile_data_card")
                     )
                     UsageCard(
-                        title = "Wi-Fi",
+                        title = stringResource(R.string.network_wifi),
                         iconRes = R.drawable.ic_wifi,
                         data = wifiUsage,
                         modifier = Modifier.weight(1f).testTag("wifi_data_card")
@@ -251,18 +260,18 @@ fun DashboardScreen(
                 onDismissRequest = { viewModel.dismissResetDialog() },
                 confirmButton = {
                     TextButton(onClick = { viewModel.confirmResetTodayUsage() }) {
-                        Text("RESET", fontWeight = FontWeight.Bold, color = AccentDanger)
+                        Text(stringResource(R.string.action_reset), fontWeight = FontWeight.Bold, color = AccentDanger)
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { viewModel.dismissResetDialog() }) {
-                        Text("CANCEL", color = secondary())
+                        Text(stringResource(R.string.action_cancel), color = secondary())
                     }
                 },
-                title = { Text("Reset Today's Usage", fontWeight = FontWeight.Bold) },
+                title = { Text(stringResource(R.string.reset_today_title), fontWeight = FontWeight.Bold) },
                 text = {
                     Text(
-                        "Today's counters will be set back to zero. This cannot be undone.",
+                        stringResource(R.string.reset_today_body),
                         color = secondary()
                     )
                 },
@@ -328,7 +337,7 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
                     ) {
                         AppIcon(
                             resId = networkIcon(live.transport),
-                            contentDescription = "Network type",
+                            contentDescription = stringResource(R.string.a11y_network_type),
                             tint = if (live.transport == Transport.NONE) secondary()
                             else MaterialTheme.colorScheme.onBackground,
                             modifier = Modifier.size(14.dp)
@@ -361,7 +370,7 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
                             modifier = Modifier.size(12.dp)
                         )
                         Text(
-                            text = "PEAK ${SpeedFormatter.format(live.peakDownloadBps, speedUnit)}",
+                            text = stringResource(R.string.hero_peak, SpeedFormatter.format(live.peakDownloadBps, speedUnit)),
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
@@ -373,7 +382,10 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Big numbers: download + upload
+            // Big numbers: download + upload. The value nodes describe themselves with
+            // their unit ("Download, 1.2 MB/s") so a screen reader never gets a bare digit.
+            val downloadDescription = stringResource(R.string.a11y_live_download, "$dlValue $dlUnit")
+            val uploadDescription = stringResource(R.string.a11y_live_upload, "$ulValue $ulUnit")
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -392,13 +404,13 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
                         ) {
                             AppIcon(
                                 resId = R.drawable.ic_arrow_down,
-                                contentDescription = "Download",
+                                contentDescription = null,
                                 tint = downColor,
                                 modifier = Modifier.size(16.dp)
                             )
                         }
                         Text(
-                            text = "DOWNLOAD",
+                            text = stringResource(R.string.label_download),
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
@@ -414,7 +426,9 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.testTag("live_download_speed_text")
+                            modifier = Modifier
+                                .testTag("live_download_speed_text")
+                                .semantics { contentDescription = downloadDescription }
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
@@ -449,13 +463,13 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
                         ) {
                             AppIcon(
                                 resId = R.drawable.ic_arrow_up,
-                                contentDescription = "Upload",
+                                contentDescription = null,
                                 tint = upColor,
                                 modifier = Modifier.size(16.dp)
                             )
                         }
                         Text(
-                            text = "UPLOAD",
+                            text = stringResource(R.string.label_upload),
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
@@ -471,7 +485,9 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.testTag("live_upload_speed_text")
+                            modifier = Modifier
+                                .testTag("live_upload_speed_text")
+                                .semantics { contentDescription = uploadDescription }
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
@@ -495,12 +511,12 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 LiveStat(
-                    label = "1 MIN AVG",
+                    label = stringResource(R.string.hero_one_minute_average),
                     value = "↓ ${SpeedFormatter.format(live.averageDownloadBps, speedUnit)}",
                     sub = "↑ ${SpeedFormatter.format(live.averageUploadBps, speedUnit)}"
                 )
                 LiveStat(
-                    label = "THIS SESSION",
+                    label = stringResource(R.string.hero_this_session),
                     value = BytesFormatter.format(live.sessionBytes),
                     sub = sessionDurationLabel(live.sessionDurationMs)
                 )
@@ -515,7 +531,7 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 TransportSpeedChip(
-                    label = "WI-FI",
+                    label = stringResource(R.string.network_wifi).uppercase(java.util.Locale.getDefault()),
                     iconRes = R.drawable.ic_wifi,
                     downloadBps = live.wifiDownloadBps,
                     uploadBps = live.wifiUploadBps,
@@ -524,7 +540,7 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
                     modifier = Modifier.weight(1f)
                 )
                 TransportSpeedChip(
-                    label = "MOBILE",
+                    label = stringResource(R.string.network_mobile).uppercase(java.util.Locale.getDefault()),
                     iconRes = R.drawable.ic_cellular,
                     downloadBps = live.mobileDownloadBps,
                     uploadBps = live.mobileUploadBps,
@@ -544,26 +560,46 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "LAST 30 SECONDS",
+                    text = stringResource(R.string.hero_last_30_seconds),
                     fontSize = 8.5.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
                     letterSpacing = 1.sp,
                     color = secondary().copy(alpha = 0.7f)
                 )
+                val waiting = !isRunning && !live.paused
+                // "Waiting" breathes instead of sitting there: the engine is starting, and
+                // a static label reads like a stuck one. Nothing is faked — the number
+                // stays 0 until a real sample is published.
+                val shimmer = rememberInfiniteTransition(label = "hero_waiting_shimmer")
+                val waitingAlpha by shimmer.animateFloat(
+                    initialValue = 0.35f,
+                    targetValue = 0.9f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(durationMillis = 900, easing = FastOutSlowInEasing),
+                        repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "hero_waiting_alpha"
+                )
                 Text(
                     text = when {
-                        live.paused -> "PAUSED — ENGINE SUSPENDED"
-                        isRunning -> "REAL-TIME"
-                        else -> "WAITING FOR ENGINE"
+                        live.paused -> stringResource(R.string.hero_status_paused)
+                        isRunning -> stringResource(R.string.hero_status_realtime)
+                        else -> stringResource(R.string.hero_status_waiting)
                     },
                     fontSize = 8.5.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
                     letterSpacing = 1.sp,
-                    color = if (live.paused) AccentWarning else if (isRunning) liveColor
-                    else secondary().copy(alpha = 0.7f),
-                    modifier = Modifier.testTag("live_speed_status_label")
+                    color = when {
+                        live.paused -> AccentWarning
+                        isRunning -> liveColor
+                        else -> secondary().copy(alpha = if (waiting) waitingAlpha else 0.7f)
+                    },
+                    modifier = Modifier
+                        .testTag("live_speed_status_label")
+                        // Changes a few times per session at most — safe to announce.
+                        .semantics { liveRegion = LiveRegionMode.Polite }
                 )
             }
         }
@@ -649,12 +685,13 @@ private fun TransportSpeedChip(
     }
 }
 
+@Composable
 private fun networkLabel(transport: Transport): String = when (transport) {
-    Transport.WIFI -> "Wi-Fi"
-    Transport.MOBILE -> "Mobile"
-    Transport.ETHERNET -> "Ethernet"
-    Transport.VPN -> "VPN"
-    Transport.NONE -> "Offline"
+    Transport.WIFI -> stringResource(R.string.network_wifi)
+    Transport.MOBILE -> stringResource(R.string.network_mobile)
+    Transport.ETHERNET -> stringResource(R.string.network_ethernet)
+    Transport.VPN -> stringResource(R.string.network_vpn)
+    Transport.NONE -> stringResource(R.string.network_offline)
 }
 
 private fun networkIcon(transport: Transport): Int = when (transport) {
@@ -664,12 +701,17 @@ private fun networkIcon(transport: Transport): Int = when (transport) {
     Transport.NONE -> R.drawable.ic_warning
 }
 
+@Composable
 private fun sessionDurationLabel(durationMs: Long): String {
-    if (durationMs <= 0L) return "just started"
+    if (durationMs <= 0L) return stringResource(R.string.hero_session_just_started)
     val totalMinutes = durationMs / 60_000L
     val hours = totalMinutes / 60L
     val minutes = totalMinutes % 60L
-    return if (hours > 0L) "${hours}h ${minutes}m" else "${minutes}m"
+    return if (hours > 0L) {
+        stringResource(R.string.duration_hours_minutes, hours, minutes)
+    } else {
+        stringResource(R.string.duration_minutes, minutes)
+    }
 }
 
 /**
@@ -787,7 +829,7 @@ fun UsageCard(
 
             Spacer(modifier = Modifier.height(14.dp))
             Text(
-                text = "TODAY",
+                text = stringResource(R.string.label_today),
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
@@ -812,13 +854,13 @@ fun UsageCard(
             ) {
                 MiniStat(
                     iconRes = R.drawable.ic_arrow_down,
-                    label = "DOWN",
+                    label = stringResource(R.string.label_down),
                     valueMb = data.download,
                     tint = SpeedDownC()
                 )
                 MiniStat(
                     iconRes = R.drawable.ic_arrow_up,
-                    label = "UP",
+                    label = stringResource(R.string.label_up),
                     valueMb = data.upload,
                     tint = SpeedUpC()
                 )
@@ -894,7 +936,7 @@ fun TotalCard(
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
             Text(
-                text = "TODAY'S TOTAL",
+                text = stringResource(R.string.total_today_title),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
@@ -927,7 +969,7 @@ fun TotalCard(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "MOBILE LIMIT $limitLabel",
+                        text = stringResource(R.string.total_mobile_limit, limitLabel),
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace,
@@ -950,14 +992,14 @@ fun TotalCard(
                 ) {
                     MiniStatOnInk(
                         iconRes = R.drawable.ic_arrow_down,
-                        label = "DOWNLOAD",
+                        label = stringResource(R.string.label_download),
                         valueMb = data.download,
                         onCard = onCard,
                         muted = muted
                     )
                     MiniStatOnInk(
                         iconRes = R.drawable.ic_arrow_up,
-                        label = "UPLOAD",
+                        label = stringResource(R.string.label_upload),
                         valueMb = data.upload,
                         onCard = onCard,
                         muted = muted
@@ -1036,13 +1078,13 @@ fun UsageAccessHintCard(modifier: Modifier = Modifier) {
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Usage Access",
+                    text = stringResource(R.string.usage_access_title),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Text(
-                    text = "Live speed works everywhere. Grant Usage Access for exact daily totals.",
+                    text = stringResource(R.string.usage_access_hint_body),
                     fontSize = 11.sp,
                     color = secondary()
                 )
@@ -1063,7 +1105,7 @@ fun UsageAccessHintCard(modifier: Modifier = Modifier) {
                     .testTag("grant_permission_button")
             ) {
                 Text(
-                    text = "GRANT",
+                    text = stringResource(R.string.action_grant),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onPrimary

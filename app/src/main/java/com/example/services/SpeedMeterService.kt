@@ -32,7 +32,9 @@ import com.example.data.PreferencesManager
 import com.example.data.ResetOffsets
 import com.example.data.TransportBytes
 import com.example.util.BytesFormatter
+import com.example.util.DateFormatter
 import com.example.util.SpeedFormatter
+import com.example.widget.TodayUsageWidget
 import com.example.util.SpeedUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,7 +46,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import java.util.Locale
 
 /** One live network interface as reported by the kernel (diagnostics panel). */
 data class InterfaceStat(val name: String, val kind: InterfaceKind, val rx: Long, val tx: Long)
@@ -90,8 +91,12 @@ class SpeedMeterService : Service() {
     private var tickerJob: Job? = null
     private var accountingJob: Job? = null
 
-    /** The measurement core — pure Kotlin, only touched from the read loop coroutine. */
-    private val engine = SpeedEngine()
+    /**
+     * The measurement core — pure Kotlin, only touched from the read loop coroutine. The
+     * samples are stamped with `elapsedRealtime`, so the same clock is injected for the
+     * session duration (monotonic, keeps counting through deep sleep).
+     */
+    private val engine = SpeedEngine(clock = { SystemClock.elapsedRealtime() })
 
     private lateinit var repository: DataUsageRepository
     private lateinit var preferencesManager: PreferencesManager
@@ -132,10 +137,6 @@ class SpeedMeterService : Service() {
     private val iconBuffers = arrayOfNulls<IconBuffer>(2)
     private var iconBufferIndex = 0
 
-    /** How many `onTimeout` calls happened in a row without a healthy run in between. */
-    @Volatile
-    private var timeoutStreak = 0
-
     private class IconBuffer(val bitmap: Bitmap, val canvas: Canvas, val paint: Paint)
 
     companion object {
@@ -158,17 +159,6 @@ class SpeedMeterService : Service() {
          */
         private const val READ_INTERVAL_MS = 500L
         private const val ACCOUNTING_PERIOD_MS = 15_000L
-
-        /**
-         * Android 15+ gives a `dataSync` foreground service a daily budget. When it runs
-         * out the OS calls `onTimeout`; restarting *immediately* in a loop only burns the
-         * remaining budget faster, so the restart is delayed and eventually handed over to
-         * the WorkManager watchdog instead.
-         */
-        private const val MAX_INLINE_TIMEOUT_RESTARTS = 2
-        private const val TIMEOUT_RESTART_BACKOFF_MS = 20_000L
-        /** Uptime after which the timeout streak is considered "not a tight loop". */
-        private const val TIMEOUT_STREAK_RESET_MS = 20 * 60_000L
 
         private val _liveSpeedFlow = MutableStateFlow(LiveSpeed())
         val liveSpeedFlow: StateFlow<LiveSpeed> = _liveSpeedFlow.asStateFlow()
@@ -206,8 +196,8 @@ class SpeedMeterService : Service() {
             }
         }
 
-        fun currentDay(): String =
-            java.text.SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(java.util.Date())
+        /** Today's row key — always `yyyy-MM-dd` in Latin digits (see [DateFormatter.day]). */
+        fun currentDay(): String = DateFormatter.day()
     }
 
     override fun onCreate() {
@@ -233,12 +223,6 @@ class SpeedMeterService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         _isServiceRunning.value = true
         startForegroundWithNotification()
-        // If the meter then keeps running for a while, the next `onTimeout` is a fresh
-        // budget event (not a restart loop) and may be answered with an inline restart again.
-        serviceScope.launch {
-            delay(TIMEOUT_STREAK_RESET_MS)
-            timeoutStreak = 0
-        }
         return START_STICKY
     }
 
@@ -246,32 +230,18 @@ class SpeedMeterService : Service() {
 
     /**
      * Android 15+ (API 35): `dataSync` foreground services get a daily budget. When it is
-     * exhausted the system calls this.
-     *
-     * Restarting instantly would spend whatever budget is left in a tight loop if the OS
-     * keeps refusing, so: the first restarts are delayed by [TIMEOUT_RESTART_BACKOFF_MS]
-     * and after [MAX_INLINE_TIMEOUT_RESTARTS] the service stops cleanly and lets the
-     * WorkManager watchdog (a different FGS start path, minutes later) pick it up.
+     * exhausted the system calls this, and the service **must stop within a few seconds**
+     * or the app is reported as not responding. So: persist nothing fancy, hand the restart
+     * to WorkManager (a delayed one-shot with exponential backoff — the budget does not
+     * come back immediately, and an in-process restart from the background would be
+     * refused anyway) and stop right away. The 60-minute watchdog stays scheduled too.
      */
     private fun handleTimeout(startId: Int) {
-        timeoutStreak++
-        if (timeoutStreak > MAX_INLINE_TIMEOUT_RESTARTS) {
-            ServiceScheduler.scheduleRetry(this)
-            stopSelf(startId)
-            return
-        }
-        serviceScope.launch {
-            try {
-                delay(TIMEOUT_RESTART_BACKOFF_MS)
-                ContextCompat.startForegroundService(this@SpeedMeterService, Intent(this@SpeedMeterService, SpeedMeterService::class.java))
-            } catch (e: Exception) {
-                ServiceScheduler.scheduleRetry(this@SpeedMeterService)
-                stopSelf()
-            }
-        }
+        ServiceScheduler.scheduleRetry(this)
+        stopSelf(startId)
     }
 
-    /** API < 35 entry point (deprecated upstream, still called on older platforms). */
+    /** API 34 entry point (`shortService` timeouts); kept so older platforms are covered too. */
     @Deprecated("Use the timeoutType overload on API 35+")
     override fun onTimeout(startId: Int) {
         handleTimeout(startId)
@@ -529,6 +499,9 @@ class SpeedMeterService : Service() {
             }
             attributedSnapshot = engine.attributedTotals()
             _todayUsageFlow.value = buildTodayEntity()
+            // First pass right away: with Usage access the row (and the notification's
+            // "Today" figure) would otherwise show 0 for the first 15 s after a start.
+            accountUsage()
             while (true) {
                 delay(ACCOUNTING_PERIOD_MS)
                 accountUsage()
@@ -614,6 +587,8 @@ class SpeedMeterService : Service() {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+        // Home-screen widget: same row, at most once a minute, no-op without a widget.
+        TodayUsageWidget.pushIfPresent(this, entity)
     }
 
     private fun deltaOf(
@@ -791,8 +766,6 @@ class SpeedMeterService : Service() {
             val canvas = buffer.canvas
             canvas.drawColor(Color.TRANSPARENT)
             val paint = buffer.paint
-            paint.textAlign = Paint.Align.CENTER
-            paint.typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
 
             // Must stay readable at status-bar size in BOTH display modes (e.g. "842",
             // "12.4", "104.9") without clipping the 144 px icon canvas.
@@ -827,6 +800,8 @@ class SpeedMeterService : Service() {
         val created = IconBuffer(bitmap, Canvas(bitmap), Paint().apply {
             color = Color.WHITE
             isAntiAlias = true
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
         })
         iconBuffers[iconBufferIndex] = created
         return created

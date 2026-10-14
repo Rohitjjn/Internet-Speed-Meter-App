@@ -2,6 +2,97 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-10-14 · loop 4] — speed-test accuracy + testability, Android 15 timeout fix, full Hindi, widget
+### Fixed
+- **`onTimeout` could get the app killed as "not responding".** On Android 15+ the
+  `dataSync` budget callback was answered with a 20 s *inline* restart from the background
+  (refused by the OS on API 35+) and `stopSelf()` was never reached. The service now stops
+  immediately and hands the restart to WorkManager (30 min one-shot, then exponential
+  back-off 10 → 20 → 40 min via `Result.retry()`); the streak counters and their coroutine
+  are gone. Both `onTimeout` overloads stay.
+- **Speed test: aborting could take up to 10 s.** The cooperative flag was only polled
+  between reads, so a Wi-Fi → mobile switch inside a blocking `read()` kept spending data
+  until the socket timeout. Every phase now runs a **sentinel that disconnects the live
+  sockets** the moment the flag flips, and the view model raises the flag *before*
+  cancelling the job. `cancelTest()` can no longer race the engine into a stray
+  "Test stopped" card after the screen already reset.
+- **Speed test: in-flight bytes were dropped.** Stream jobs were cancelled before the
+  counter was read; they are now **joined** (with a short grace) first, so the final byte
+  count includes what was in flight.
+- **Speed test: the number included TCP slow start.** Throughput is averaged over the
+  window after a grace period (1.5 s download / 1 s upload) whenever ≥ 1 s of measurement
+  remains after it, otherwise from the first byte — `computeThroughput` is pure and tested.
+  Latency samples run on a kept-alive connection after a warm-up, so a "ping" is a round
+  trip, not a TLS handshake. (The brainstormed "stream ramp" was rejected: it deflates fast
+  lines; the grace window achieves the goal without touching the measurement.)
+- **Upload could report how fast a proxy discards bytes.** The server now has to
+  acknowledge a fixed 32 KiB POST with a 2xx/3xx before the timed streams start; otherwise
+  the phase fails with a typed error (`UPLOAD_NOT_ACKNOWLEDGED` / HTTP code) and the result
+  card shows the acknowledgement code.
+- **Typed failures instead of exception strings.** `SpeedTestException(failure, host,
+  httpCode)` → localized messages (`test_error_*`); `AUTO` falls back **only** when the
+  *latency probe* fails on the first host — a failed download is reported, not retried on
+  another host at the user's expense.
+- **VPN over mobile and metered hotspots were treated as free.** `Connectivity.isMetered()`
+  now also honours `ConnectivityManager.isActiveNetworkMetered`; the confirmation names the
+  transport and notes when Data Saver is on.
+- **Date keys depended on the device locale.** `DateFormatter`/service day keys use
+  `Locale.US` digits (a Hindi/Arabic locale would have produced non-ASCII `yyyy-MM-dd`
+  keys and split the history).
+- Session duration can no longer read 0 when the monotonic clock starts at 0 (explicit
+  "started" flag instead of a sentinel value); `SpeedEngine` accepts an injected clock.
+- Settings: the endpoint radio kept a second copy of the choice that could drift from the
+  stored one; the Dark Mode row had a doubled inner padding; permission rows only
+  re-checked on first composition (now on every resume, in Settings and Intro).
+- Dashboard limit dialog printed the limit as a raw `Double` (`2.0 GB`).
+
+### Added
+- **`SpeedTestViewModelTest`** — the test's rules with a fake `Connectivity` and a fake
+  `SpeedTestRunner`: metered asks / dismiss / confirm, unmetered runs at once, AUTO fallback
+  only on unreachability, download failure does not fall back, explicit endpoint never falls
+  back, transport change aborts without a number, previous result exposed, STOP → idle with
+  the abort flag seen by the engine.
+- **`SpeedTestMathTest`** (grace-window throughput, `DeltaMath.percentChange`, `UsageCsv`),
+  **`SettingsViewModelTest`** (endpoint auto-save round-trips), **`StringResourceParityTest`**
+  (English ⇄ Hindi keys and format arguments), two new `SpeedEngineTest` cases (injected
+  clock never runs backwards; history/average stay bounded over a 20-minute run), and an
+  upload-acknowledgement case in the instrumented smoke test.
+- **Home-screen widget** `TodayUsageWidget` (RemoteViews, 2×1 resizable, light/night
+  colours): today's real total + mobile/Wi-Fi split + render time. Pushed by the service at
+  most once a minute when a widget exists, refreshed every 30 min by `WidgetRefreshWorker`,
+  kept by ProGuard.
+- **History CSV export** through the share sheet (`UsageCsv`, raw bytes, newest first, no
+  file / storage permission).
+- **Hindi pass 2** — every string in Intro, Dashboard, Test, History, Settings, the widget
+  and all dialogs is a resource now: 229 keys in `values/` with a `values-hi/` counterpart.
+- **Gauge ghost needle** for the previous result of the metric being shown, a
+  "↑ 12 % vs last test" chip, and a breathing "WAITING FOR ENGINE" label.
+- **Accessibility**: content descriptions on the live download/upload numbers, the gauge,
+  every icon button and the accent swatches; polite live regions on phase/status labels
+  and the result/error cards; `Role`/`selected` semantics on the segmented controls and
+  endpoint options; the widget root is described for TalkBack.
+- Settings: **tap-to-save** endpoint options with a "Saved: …" summary, custom URL keeps an
+  explicit SAVE ENDPOINT with an "unsaved" hint, **collapsible** SPEED TEST SERVER and
+  MEASUREMENT ENGINE groups (collapsed by default, one-line status in the header), a
+  "Saved: 2 GB per day" line under the limit field.
+- Test and History screens are **two-column from 600 dp**.
+
+### Changed
+- `SpeedTestEngine` exposes a `SpeedTestRunner` interface (`Live` = the real engine) and
+  `SpeedTestViewModel` takes `Connectivity`, `SpeedTestRunner`, `PreferencesManager` and a
+  live-speed provider through its constructor (the default factory still works).
+- The service accounts usage once immediately after start (the "Today" figure no longer
+  shows 0 for the first 15 s with Usage access), and the status-bar glyph's `Paint`/typeface
+  are created once instead of per redraw.
+- `WorkManager` retry request carries explicit exponential back-off criteria.
+- Removed the unused template colours from `colors.xml`; widget colours added
+  (`values/` + `values-night/`).
+
+### Docs
+- README, project blueprint, database schema and this changelog describe the grace-window
+  measurement, the upload acknowledgement, the timeout hand-off, the widget, the export and
+  the localization status; next-loop prompt regenerated.
+
 ## [2026-10-13 · loop 3] — speed-test resilience, source-health extraction, premium polish
 ### Fixed
 - **The active test could not survive a blocked host.** It now measures through an

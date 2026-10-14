@@ -3,7 +3,6 @@ package com.example.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.data.NetworkStatsHelper
 import com.example.data.PreferencesManager
 import com.example.data.UsageResetter
 import com.example.services.SpeedTestServers

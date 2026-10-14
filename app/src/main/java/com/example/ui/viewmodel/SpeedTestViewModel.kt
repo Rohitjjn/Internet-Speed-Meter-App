@@ -3,16 +3,22 @@ package com.example.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.R
 import com.example.data.PreferencesManager
 import com.example.data.SpeedTestResult
-import com.example.services.NetworkMonitor
+import com.example.services.AndroidConnectivity
+import com.example.services.Connectivity
+import com.example.services.LiveSpeed
 import com.example.services.SpeedMeterService
-import com.example.services.SpeedTestEngine
+import com.example.services.SpeedTestException
+import com.example.services.SpeedTestFailure
+import com.example.services.SpeedTestRunner
 import com.example.services.SpeedTestServers
 import com.example.services.TestAbortSignal
 import com.example.services.TestAbortedException
 import com.example.services.TestDataCost
 import com.example.services.TestServer
+import com.example.services.Transport
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -20,6 +26,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -36,8 +43,8 @@ enum class SpeedTestPhase {
 
 /**
  * UI state of the active speed test. Every number comes from a real measurement in
- * [SpeedTestEngine]; `null` means "not measured yet" (the UI shows a dash, never a 0
- * pretending to be a result).
+ * [com.example.services.SpeedTestEngine]; `null` means "not measured yet" (the UI shows a
+ * dash, never a 0 pretending to be a result).
  */
 data class SpeedTestState(
     val phase: SpeedTestPhase = SpeedTestPhase.IDLE,
@@ -54,13 +61,21 @@ data class SpeedTestState(
     val finishedAtMillis: Long = 0L,
     /** True when a second endpoint had to be used because the first one was unreachable. */
     val usedFallback: Boolean = false,
-    /** Set when the user must confirm the expected mobile-data cost before starting. */
+    /** Set when the user must confirm the expected metered-data cost before starting. */
     val pendingConfirmationMb: Int? = null,
+    /** Transport the confirmation is about (mobile, or a metered Wi-Fi / VPN). */
+    val pendingConfirmationTransport: Transport = Transport.NONE,
+    /** True when the system Data Saver is on while the confirmation is shown. */
+    val pendingConfirmationDataSaver: Boolean = false,
     /**
      * True when the run was stopped on purpose (user, or a network change mid-test) rather
      * than by a real failure — the UI must not report "could not finish" for that.
      */
-    val aborted: Boolean = false
+    val aborted: Boolean = false,
+    /** The most recent stored result at the moment this run started (ghost needle, "vs last"). */
+    val previousResult: SpeedTestResult? = null,
+    /** HTTP status the server acknowledged the upload verification with (0 = none yet). */
+    val uploadAckCode: Int = 0
 ) {
     val isRunning: Boolean
         get() = phase == SpeedTestPhase.PING ||
@@ -75,11 +90,51 @@ data class SpeedTestState(
             SpeedTestPhase.DONE -> downloadBitsPerSecond ?: 0.0
             else -> 0.0
         }
+
+    /**
+     * The previous run's value for the metric the gauge is showing (download, or upload
+     * during the upload phase) in bits/s — drawn as a ghost needle. `null` = no history.
+     */
+    val ghostBitsPerSecond: Double?
+        get() {
+            val previous = previousResult ?: return null
+            val bytesPerSecond = when (phase) {
+                SpeedTestPhase.UPLOAD -> previous.uploadBps
+                else -> previous.downloadBps
+            }
+            return if (bytesPerSecond > 0.0) bytesPerSecond * 8.0 else null
+        }
 }
 
-class SpeedTestViewModel(application: Application) : AndroidViewModel(application) {
+/**
+ * Drives the opt-in speed test. The measurement itself lives in
+ * [com.example.services.SpeedTestEngine]; this class owns the **rules** around it:
+ *
+ *  - ask before spending metered data (estimate from the real line speed),
+ *  - resolve the endpoint from the stored preference and fall back only on a
+ *    *reachability* failure,
+ *  - watch the transport for the whole run and abort when it changes,
+ *  - persist the result (20 entries) and expose the previous one for comparison.
+ *
+ * [connectivity], [runner] and [preferencesManager] are injectable so every rule above is
+ * covered by `SpeedTestViewModelTest` without a network or a device.
+ */
+class SpeedTestViewModel(
+    application: Application,
+    private val connectivity: Connectivity,
+    private val runner: SpeedTestRunner,
+    private val preferencesManager: PreferencesManager,
+    private val liveSpeed: () -> LiveSpeed
+) : AndroidViewModel(application) {
 
-    private val preferencesManager = PreferencesManager(application)
+    /** The constructor the default `ViewModelProvider` factory uses. */
+    constructor(application: Application) : this(
+        application = application,
+        connectivity = AndroidConnectivity(application),
+        runner = SpeedTestRunner.Live,
+        preferencesManager = PreferencesManager(application),
+        liveSpeed = { SpeedMeterService.liveSpeedFlow.value }
+    )
 
     private val _state = MutableStateFlow(SpeedTestState())
     val state: StateFlow<SpeedTestState> = _state.asStateFlow()
@@ -88,25 +143,7 @@ class SpeedTestViewModel(application: Application) : AndroidViewModel(applicatio
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private var testJob: Job? = null
-    private var transportWatcher: Job? = null
-
-    // Mirror of the stored server preferences (a test can start before the first
-    // collection completes; the defaults are exactly what a fresh install uses anyway).
-    private var serverPreference: String = SpeedTestServers.ID_AUTO
-    private var customUrl: String = ""
-    private var customFlavour: String = SpeedTestServers.FLAVOUR_CLOUDFLARE
-
-    init {
-        viewModelScope.launch {
-            preferencesManager.testServerFlow.collect { serverPreference = it }
-        }
-        viewModelScope.launch {
-            preferencesManager.testServerUrlFlow.collect { customUrl = it }
-        }
-        viewModelScope.launch {
-            preferencesManager.testServerFlavourFlow.collect { customFlavour = it }
-        }
-    }
+    private var activeAbort: TestAbortSignal? = null
 
     /**
      * Entry point of the button.
@@ -117,37 +154,44 @@ class SpeedTestViewModel(application: Application) : AndroidViewModel(applicatio
      */
     fun requestTest() {
         if (testJob?.isActive == true) return
-        val context = getApplication<Application>()
-        if (NetworkMonitor.isMetered(context)) {
-            val live = SpeedMeterService.liveSpeedFlow.value
+        if (!connectivity.isMetered()) {
+            startTest()
+            return
+        }
+        val live = liveSpeed()
+        viewModelScope.launch {
+            val candidates = loadCandidates()
             _state.update {
                 it.copy(
                     pendingConfirmationMb = TestDataCost.estimateMegabytes(
                         downloadBps = live.steadyDownloadBps,
                         uploadBps = live.steadyUploadBps,
-                        uploadEnabled = candidates().firstOrNull()?.supportsUpload ?: true
-                    )
+                        uploadEnabled = candidates.first().supportsUpload
+                    ),
+                    pendingConfirmationTransport = connectivity.currentTransport(),
+                    pendingConfirmationDataSaver = connectivity.isDataSaverOn()
                 )
             }
-            return
         }
-        startTest()
     }
 
     fun dismissConfirmation() {
-        _state.update { it.copy(pendingConfirmationMb = null) }
+        _state.update { it.copy(pendingConfirmationMb = null, pendingConfirmationDataSaver = false) }
     }
 
     fun confirmStart() {
-        _state.update { it.copy(pendingConfirmationMb = null) }
+        _state.update { it.copy(pendingConfirmationMb = null, pendingConfirmationDataSaver = false) }
         startTest()
     }
 
+    /**
+     * Stops a running test. The abort flag is raised **before** the job is cancelled so the
+     * engine's sentinel tears the sockets down instead of waiting for a read timeout.
+     */
     fun cancelTest() {
+        activeAbort?.abort(getApplication<Application>().getString(R.string.test_stopped))
         testJob?.cancel()
         testJob = null
-        transportWatcher?.cancel()
-        transportWatcher = null
         _state.value = SpeedTestState()
     }
 
@@ -155,35 +199,46 @@ class SpeedTestViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch { preferencesManager.clearSpeedTestResults() }
     }
 
-    private fun candidates(): List<TestServer> =
-        SpeedTestServers.candidates(serverPreference, customUrl, customFlavour)
+    /**
+     * The endpoint order for this run, read from DataStore **at start** (a choice saved in
+     * Settings a moment ago is honoured even before any collector caught up).
+     */
+    private suspend fun loadCandidates(): List<TestServer> {
+        val preference = runCatching { preferencesManager.testServerFlow.first() }
+            .getOrDefault(SpeedTestServers.ID_AUTO)
+        val customUrl = runCatching { preferencesManager.testServerUrlFlow.first() }.getOrDefault("")
+        val flavour = runCatching { preferencesManager.testServerFlavourFlow.first() }
+            .getOrDefault(SpeedTestServers.FLAVOUR_CLOUDFLARE)
+        return SpeedTestServers.candidates(preference, customUrl, flavour)
             .ifEmpty { listOf(SpeedTestServers.CLOUDFLARE) }
+    }
 
     fun startTest() {
         if (testJob?.isActive == true) return
-        val context = getApplication<Application>()
+        val app = getApplication<Application>()
         val abort = TestAbortSignal()
-        val transportAtStart = NetworkMonitor.currentTransport(context)
-        val candidates = candidates()
+        activeAbort = abort
+        val transportAtStart = connectivity.currentTransport()
 
         testJob = viewModelScope.launch {
+            val candidates = loadCandidates()
+            val previous = runCatching { preferencesManager.speedTestResultsFlow.first().firstOrNull() }
+                .getOrNull()
             _state.value = SpeedTestState(
                 phase = SpeedTestPhase.PING,
                 startedAtMillis = System.currentTimeMillis(),
-                server = candidates.first().host
+                server = candidates.first().host,
+                previousResult = previous
             )
 
             // Watch the transport for the whole run: switching networks mid-test would mix
             // two different connections (and could silently spend mobile data).
-            transportWatcher = launch {
+            val transportWatcher = launch {
                 while (isActive) {
-                    delay(700L)
-                    val now = NetworkMonitor.currentTransport(context)
+                    delay(TRANSPORT_POLL_MS)
+                    val now = connectivity.currentTransport()
                     if (now != transportAtStart) {
-                        abort.abort(
-                            "Network changed to ${NetworkMonitor.labelOf(now)} mid-test — the " +
-                                "test was stopped so its result cannot mix two connections."
-                        )
+                        abort.abort(app.getString(R.string.test_error_network_changed, networkName(now)))
                         break
                     }
                 }
@@ -199,6 +254,8 @@ class SpeedTestViewModel(application: Application) : AndroidViewModel(applicatio
                         break
                     } catch (aborted: TestAbortedException) {
                         throw aborted
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
                     } catch (error: Exception) {
                         lastError = error
                         // Only a *reachability* failure falls through to the next endpoint
@@ -213,41 +270,47 @@ class SpeedTestViewModel(application: Application) : AndroidViewModel(applicatio
                                 latencyMs = null,
                                 jitterMs = null,
                                 liveBitsPerSecond = 0.0,
-                                error = null,
                                 server = candidates[index + 1].host,
                                 usedFallback = true
                             )
                         }
                     }
                 }
-                lastError?.let { throw it }
-            } catch (aborted: TestAbortedException) {
-                _state.update {
-                    it.copy(
-                        phase = SpeedTestPhase.ERROR,
-                        liveBitsPerSecond = 0.0,
-                        phaseProgress = 0f,
-                        error = aborted.message ?: "Test stopped",
-                        aborted = true,
-                        finishedAtMillis = System.currentTimeMillis()
-                    )
-                }
-            } catch (cancellation: CancellationException) {
+                if (lastError != null) throw lastError
+            } catch (cancelled: CancellationException) {
                 _state.value = SpeedTestState()
-                throw cancellation
+                throw cancelled
+            } catch (aborted: TestAbortedException) {
+                if (!isActive) {
+                    // The user stopped it: cancelTest() raised the flag *and* cancelled this
+                    // job, and the engine happened to notice the flag first. Plain idle,
+                    // not an error card that pops up after the screen already reset.
+                    _state.value = SpeedTestState()
+                } else {
+                    _state.update {
+                        it.copy(
+                            phase = SpeedTestPhase.ERROR,
+                            liveBitsPerSecond = 0.0,
+                            phaseProgress = 0f,
+                            aborted = true,
+                            error = aborted.message ?: app.getString(R.string.test_stopped),
+                            finishedAtMillis = System.currentTimeMillis()
+                        )
+                    }
+                }
             } catch (error: Exception) {
                 _state.update {
                     it.copy(
                         phase = SpeedTestPhase.ERROR,
                         liveBitsPerSecond = 0.0,
                         phaseProgress = 0f,
-                        error = error.message ?: "Test failed",
+                        error = describe(error),
                         finishedAtMillis = System.currentTimeMillis()
                     )
                 }
             } finally {
-                transportWatcher?.cancel()
-                transportWatcher = null
+                transportWatcher.cancel()
+                if (activeAbort === abort) activeAbort = null
             }
         }
     }
@@ -265,11 +328,12 @@ class SpeedTestViewModel(application: Application) : AndroidViewModel(applicatio
                 jitterMs = null,
                 server = server.host,
                 usedFallback = usedFallback,
+                uploadAckCode = 0,
                 error = null
             )
         }
 
-        val latency = SpeedTestEngine.measureLatency(server, abort) { sample ->
+        val latency = runner.latency(server, abort) { sample ->
             _state.update { it.copy(latencyMs = sample) }
         }
         _state.update {
@@ -281,7 +345,7 @@ class SpeedTestViewModel(application: Application) : AndroidViewModel(applicatio
             )
         }
 
-        val download = SpeedTestEngine.measureDownload(server, abort = abort) { bitsPerSecond, fraction ->
+        val download = runner.download(server, abort) { bitsPerSecond, fraction ->
             _state.update { it.copy(liveBitsPerSecond = bitsPerSecond, phaseProgress = fraction) }
         }
         _state.update {
@@ -294,23 +358,26 @@ class SpeedTestViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         val upload = if (server.supportsUpload) {
-            SpeedTestEngine.measureUpload(server, abort = abort) { bitsPerSecond, fraction ->
+            runner.upload(server, abort) { bitsPerSecond, fraction ->
                 _state.update { it.copy(liveBitsPerSecond = bitsPerSecond, phaseProgress = fraction) }
             }
         } else {
             null
         }
 
-        preferencesManager.saveSpeedTestResult(
-            SpeedTestResult(
-                atMillis = System.currentTimeMillis(),
-                downloadBps = download.bitsPerSecond / 8.0,
-                uploadBps = (upload?.bitsPerSecond ?: 0.0) / 8.0,
-                latencyMs = latency.minMs,
-                jitterMs = latency.jitterMs,
-                server = server.host
+        // The measurement is done; a persistence hiccup must not turn it into an "error".
+        runCatching {
+            preferencesManager.saveSpeedTestResult(
+                SpeedTestResult(
+                    atMillis = System.currentTimeMillis(),
+                    downloadBps = download.bitsPerSecond / 8.0,
+                    uploadBps = (upload?.bitsPerSecond ?: 0.0) / 8.0,
+                    latencyMs = latency.minMs,
+                    jitterMs = latency.jitterMs,
+                    server = server.host
+                )
             )
-        )
+        }
 
         _state.update {
             it.copy(
@@ -318,14 +385,60 @@ class SpeedTestViewModel(application: Application) : AndroidViewModel(applicatio
                 phaseProgress = 1f,
                 liveBitsPerSecond = 0.0,
                 uploadBitsPerSecond = upload?.bitsPerSecond,
+                uploadAckCode = upload?.serverAckCode ?: 0,
                 finishedAtMillis = System.currentTimeMillis()
             )
         }
     }
 
+    /** Localized explanation of a failure; the engine only knows the kind + host. */
+    private fun describe(error: Exception): String {
+        val app = getApplication<Application>()
+        if (error is SpeedTestException) {
+            return when (error.failure) {
+                SpeedTestFailure.UNREACHABLE ->
+                    app.getString(R.string.test_error_unreachable, error.host)
+                SpeedTestFailure.NO_DOWNLOAD_DATA ->
+                    app.getString(R.string.test_error_no_download_data, error.host)
+                SpeedTestFailure.NO_UPLOAD_ENDPOINT ->
+                    app.getString(R.string.test_error_no_upload_endpoint, error.host)
+                SpeedTestFailure.UPLOAD_NOT_ACKNOWLEDGED ->
+                    if (error.httpCode > 0) {
+                        app.getString(R.string.test_error_upload_rejected, error.host, error.httpCode)
+                    } else {
+                        app.getString(R.string.test_error_upload_not_acknowledged, error.host)
+                    }
+                SpeedTestFailure.NOTHING_SENT ->
+                    app.getString(R.string.test_error_nothing_sent, error.host)
+            }
+        }
+        val detail = error.message?.takeIf { it.isNotBlank() }
+        return if (detail != null) {
+            app.getString(R.string.test_error_generic, detail)
+        } else {
+            app.getString(R.string.test_error_unknown)
+        }
+    }
+
+    private fun networkName(transport: Transport): String {
+        val app = getApplication<Application>()
+        return when (transport) {
+            Transport.WIFI -> app.getString(R.string.network_wifi)
+            Transport.MOBILE -> app.getString(R.string.network_mobile)
+            Transport.ETHERNET -> app.getString(R.string.network_ethernet)
+            Transport.VPN -> app.getString(R.string.network_vpn)
+            Transport.NONE -> app.getString(R.string.network_offline)
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
+        activeAbort?.abort("ViewModel cleared")
         testJob?.cancel()
-        transportWatcher?.cancel()
+    }
+
+    companion object {
+        /** How often the transport is re-read while a test runs. */
+        const val TRANSPORT_POLL_MS = 700L
     }
 }

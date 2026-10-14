@@ -1,6 +1,7 @@
 package com.example.services
 
 import android.content.Context
+import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
@@ -44,6 +45,9 @@ object ServiceScheduler {
     /** Default delay before the watchdog is allowed to try again after a timeout storm. */
     private const val RETRY_DELAY_MINUTES = 30L
 
+    /** First back-off step when the retry itself fails (WorkManager doubles it each time). */
+    private const val RETRY_BACKOFF_MINUTES = 10L
+
     fun schedule(context: Context) {
         try {
             val request = PeriodicWorkRequestBuilder<SpeedKeepAliveWorker>(60, TimeUnit.MINUTES)
@@ -60,15 +64,17 @@ object ServiceScheduler {
     }
 
     /**
-     * Called when the service hit the Android 15+ `dataSync` budget and its inline restart
-     * attempts were exhausted: instead of a tight restart loop, the watchdog worker is
-     * scheduled for later. WorkManager starts the FGS from a different (allowed) path and
-     * the meter comes back once the budget window rolls over.
+     * Called from `onTimeout` when the service hit the Android 15+ `dataSync` budget: the
+     * service stops at once (it must) and the watchdog worker is scheduled for later.
+     * WorkManager starts the FGS from a different (allowed) path, and if the budget has not
+     * rolled over yet the worker's `retry()` backs off exponentially (10 → 20 → 40 min …)
+     * instead of hammering the system.
      */
     fun scheduleRetry(context: Context, delayMinutes: Long = RETRY_DELAY_MINUTES) {
         try {
             val request = OneTimeWorkRequestBuilder<SpeedKeepAliveWorker>()
                 .setInitialDelay(delayMinutes, TimeUnit.MINUTES)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, RETRY_BACKOFF_MINUTES, TimeUnit.MINUTES)
                 .setConstraints(Constraints.Builder().build())
                 .build()
             WorkManager.getInstance(context).enqueueUniqueWork(
