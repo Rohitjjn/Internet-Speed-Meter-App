@@ -96,13 +96,16 @@ class SettingsViewModelTest {
     fun pausingTheMeterIsADurableFlagThatEveryRestartPathReads() = runTest(dispatcher) {
         MeterControl.resetCacheForTests()
         viewModel.setMeterPaused(true)
+        // Durable: the store carries the flag ...
         assertEquals(true, preferences.meterPausedByUserFlow.first { it })
-        // The in-memory mirror (dashboard button, tile) follows the store.
-        assertEquals(true, MeterControl.pausedByUser.value)
+        // ... and the in-memory mirror (dashboard button, tile) agrees. The two writes land
+        // on different dispatchers, so wait for the mirror instead of sampling it.
+        assertEquals(true, MeterControl.pausedByUser.first { it })
         assertEquals(false, MeterControl.mayStart(application, preferences))
 
         viewModel.setMeterPaused(false)
         assertEquals(false, preferences.meterPausedByUserFlow.first { !it })
+        assertEquals(false, MeterControl.pausedByUser.first { !it })
         assertEquals(true, MeterControl.mayStart(application, preferences))
     }
 

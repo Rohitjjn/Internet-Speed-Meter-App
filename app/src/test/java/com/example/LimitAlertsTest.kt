@@ -26,7 +26,9 @@ class LimitAlertsTest {
 
     @Test
     fun theHighestReachedThresholdIsPendingUntilDismissed() {
-        val limit = 1L * gb
+        // 1000 MB so every fraction below is an exact byte count (1 GiB × 9 / 10 truncates
+        // to 89.99999 %, which the rule — correctly — does not round up to 90 %).
+        val limit = 1000L * mb
         assertNull(LimitAlerts.pendingLevel(usedBytes = limit / 4, limitBytes = limit, dismissedLevel = 0L))
         assertEquals(50L, LimitAlerts.pendingLevel(limit / 2, limit, 0L))
         // Dismissed 50 → quiet until 90.
@@ -39,7 +41,7 @@ class LimitAlertsTest {
 
     @Test
     fun jumpingPastSeveralThresholdsShowsOnlyTheHighest() {
-        val limit = 1L * gb
+        val limit = 1000L * mb
         // A big transfer took the day from 10 % to 95 %: one dialog (90), not three.
         assertEquals(90L, LimitAlerts.pendingLevel(limit * 95 / 100, limit, 0L))
     }

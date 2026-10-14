@@ -66,15 +66,19 @@ object MeterControl {
         return SpeedMeterService.startService(context)
     }
 
-    /** Stops the meter on the user's request and remembers it (flag first, then the service). */
+    /**
+     * Stops the meter on the user's request and remembers it. The in-memory mirror flips
+     * first (the dashboard button and the tile react at once), then the flag is persisted,
+     * then the service is stopped.
+     */
     suspend fun pause(
         context: Context,
         preferences: PreferencesManager = PreferencesManager(context.applicationContext)
     ) {
         val app = context.applicationContext
-        preferences.setMeterPausedByUser(true)
         _pausedByUser.value = true
         loaded = true
+        preferences.setMeterPausedByUser(true)
         SpeedMeterService.stopService(app)
         // The OS notice ("Android stopped the meter") is moot while the user holds the pause.
         SpeedMeterService.clearPausedNotification(app)
@@ -86,9 +90,9 @@ object MeterControl {
         preferences: PreferencesManager = PreferencesManager(context.applicationContext)
     ): Boolean {
         val app = context.applicationContext
-        preferences.setMeterPausedByUser(false)
         _pausedByUser.value = false
         loaded = true
+        preferences.setMeterPausedByUser(false)
         return SpeedMeterService.startService(app)
     }
 
