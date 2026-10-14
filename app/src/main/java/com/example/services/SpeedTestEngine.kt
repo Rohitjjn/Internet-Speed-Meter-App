@@ -328,12 +328,13 @@ object SpeedTestEngine {
                                     val read = try {
                                         input.read(buffer)
                                     } catch (e: Exception) {
-                                        -1
+                                        -2 // cut socket / hiccup: not a complete body
                                     }
-                                    if (read < 0) {
+                                    if (read == -1) {
                                         bodyComplete = true
                                         break
                                     }
+                                    if (read < 0) break
                                     if (read == 0) continue
                                     if (firstByteNs.get() == 0L) {
                                         firstByteNs.compareAndSet(0L, System.nanoTime())

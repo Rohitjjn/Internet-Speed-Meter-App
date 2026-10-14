@@ -20,7 +20,7 @@ project keeps improving indefinitely.
   check runs: the first run exposed 4 red tests (gauge headroom, `resetSession` republish,
   `cancelTest` draining, stale cost figures) — fixed; later runs exposed that Robolectric's
   legacy graphics mode cannot answer `assertIsDisplayed` below the fold — tests assert
-  presence and drive clicks through the semantics action. **101 unit tests, green.**
+  presence and drive clicks through the semantics action. **99 unit tests, green.**
 - **Honest "meter paused".** `startService()` returns whether the OS accepted the start;
   every refusal (timeout retry, watchdog, boot receiver, `startForeground` throwing) posts
   the "Speed meter paused" notification (channel `speed_meter_status`, id 1002) — cleared on

@@ -50,7 +50,7 @@ All notable changes to this project will be documented in this file.
 - Tests: `ScreensRenderTest` (Settings renders, the server group expands and **saves on
   tap**; the idle speed-test screen renders gauge, phase label and START without a network),
   `TodayUsageWidgetTest` (the `RemoteViews` carry the real total, the split and a timestamp,
-  and the root is tappable), `SpeedTestMathTest` request-sizing cases. 101 unit tests.
+  and the root is tappable), `SpeedTestMathTest` request-sizing cases. 99 unit tests.
 
 ### Changed
 - **Readability:** no Compose text below **10 sp** any more (the 8.5 / 9 / 9.5 sp eyebrows and

@@ -20,6 +20,7 @@ import com.example.ui.screens.SpeedTestScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.SettingsViewModel
 import com.example.ui.viewmodel.SpeedTestViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -83,9 +84,17 @@ class ScreensRenderTest {
 
         // Tap = save: the stored preference changes, no extra "save" step.
         composeRule.onNodeWithTag("server_option_librespeed").performSemanticsAction(SemanticsActions.OnClick)
-        val stored = runBlocking { isolated.manager.testServerFlow.first { it == SpeedTestServers.ID_LIBRESPEED } }
-        assertEquals(SpeedTestServers.ID_LIBRESPEED, stored)
+        // The save is a viewModelScope coroutine on the main looper, so the test thread must
+        // keep idling it instead of blocking in runBlocking (that would deadlock Robolectric).
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.waitForIdle()
+            readStoredServer() == SpeedTestServers.ID_LIBRESPEED
+        }
+        assertEquals(SpeedTestServers.ID_LIBRESPEED, readStoredServer())
     }
+
+    private fun readStoredServer(): String =
+        runBlocking(Dispatchers.IO) { isolated.manager.testServerFlow.first() }
 
     @Test
     fun speedTestIdleRendersGaugeAndStartButtonWithoutANetwork() {
