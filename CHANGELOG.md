@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-10-14 · loop 7] — dark background, readable system bars, speed-icon repair
+### Fixed
+- Restored a soft white rounded ambient glow behind the dark-mode glass cards.
+- Fixed the live status-bar number becoming a box: transparent `Canvas.drawColor` used
+  SRC_OVER and never erased the old digits on rotating bitmaps. New `SpeedIconRenderer`
+  creates a clean 96×96 white-on-transparent glyph only when the number/unit changes,
+  never mutates an already-published bitmap, and fits each text row by measured bounds.
+  Notifications update quietly without a changing timestamp.
+- Status/navigation icon contrast now follows the app's effective theme, including app
+  dark + system light and the reverse. SystemUI still owns the notification-shade colour.
+- Main-screen headers avoid system bars/cutouts; keyboard insets protect scrollable input
+  content while the floating nav retains its navigation-bar spacing.
+- Repeated speed-test taps no longer duplicate metered-confirmation lookups. Dismiss/stop
+  cancel pending work; stale callbacks cannot reopen the prompt or start a test.
+
+### Next-loop improvements
+- Honour the phone's Remove animations setting via a lifecycle-bound observer. Show the
+  system-forced state in Settings without changing the saved user preference. Extended
+  reduce-motion handling to stage/page fades, gauge/metrics, progress bars, card expansion,
+  intro dots and nav pills; measurement cadence is unchanged.
+- Remove only app-owned CSV exports older than 24 hours on the next export. Keep recent
+  shares, unrelated files and directories.
+- Quick Settings tile prefers the running service's same-day accounting row; falls back to
+  Room if stopped or crossing midnight. No live-speed claim or extra polling.
+- Added native pixel regression tests for icon accumulation, cache/unit changes, white
+  alpha-mask/margins and long values; system-bar contrast on API 26/29/35; observed motion
+  preference changes; metered-confirmation races; cache cleanup and tile snapshot selection.
+- CI verification: 130 tests passed, 0 failed; lint 0 errors (25 existing warnings).
+- EN/HI resource parity: 268 keys. No new dependency, permission, database migration or
+  signing change. Device/OEM visual acceptance and larger roadmap features remain pending
+  (see `docs/next-loop-prompt.md`).
+
 ## [2026-10-14 · loop 6] — stable signing (installs update in place), pause-by-you, screen-off cadence, acknowledged upload window, monthly limit, CSV attachments
 ### Fixed
 - **"App not installed as package conflicts with an existing package."** Every CI build

@@ -3,6 +3,12 @@
 **Database**: `speed_data_tracker_db` (Room, **version 3**,
 `fallbackToDestructiveMigration(dropAllTables = true)`).
 
+Loop 7 also makes **no schema/key change**: system reduce-motion is read from Android's
+`Settings.Global.ANIMATOR_DURATION_SCALE`, not stored as a new preference. Effective motion
+reduction is the existing user flag OR the system setting. Export cleanup deletes only
+`speed-meter-*.csv` files older than 24 hours from the private cache on the next export; it
+never deletes Room rows or speed-test results.
+
 No Room schema change was needed for the speed-test, widget, export, pause or monthly-limit
 work: speed-test results and display preferences live in DataStore (see the bottom of this
 file), the daily table keeps exactly the same four real counters per transport, and the CSV
@@ -72,7 +78,7 @@ persisted total.
 | History → export | `UsageCsv.build(rows)` — header + one line per day, raw bytes, newest first; written to `cache/exports/speed-meter-usage-<day>.csv` and shared as a `text/csv` attachment through the manifest `FileProvider` (`${applicationId}.fileprovider`, paths in `res/xml/file_paths.xml`); falls back to plain `ACTION_SEND` text if the file cannot be written |
 | Speed Test → export | `SpeedTestCsv.build(results)` from the DataStore history (not this table): ISO-8601 UTC, epoch ms, download/upload in bytes/s and Mbps, latency, jitter, server — same FileProvider path, `speed-meter-speed-tests-<day>.csv` |
 | `TodayUsageWidget` | the service's in-memory `todayUsageFlow` while it runs, otherwise `getByDate(today)` from `WidgetRefreshWorker` (every 30 min) |
-| `SpeedMeterTile` (Quick Settings) | `getByDate(today)` once per `onStartListening` (shade opened) → subtitle; never a live value |
+| `SpeedMeterTile` (Quick Settings) | same-day `todayUsageFlow` when running, else `getByDate(today)`, once per `onStartListening` → subtitle; an accounting snapshot, never a live speed |
 | Status-bar notification | the service's own row (`todayUsageFlow`) |
 
 ## DataStore (not SQL, but persisted app state)
@@ -94,7 +100,7 @@ write the real one.
 | `last_dismissed_mobile_alert` + `last_dismissed_alert_date` | Long/String | rate-limit for the daily limit alert (counts only while the date is today) |
 | `last_dismissed_monthly_alert` + `last_dismissed_monthly_alert_month` | Long/String | rate-limit for the monthly limit alert (counts only while the month is the current `yyyy-MM`) |
 | `meter_paused_by_user` | Boolean | the user's own pause (default `false`); `MeterControl` reads it before any restart and the UI labels the state "paused by you" |
-| `reduced_motion` | Boolean | reduce-motion switch (default `false`): splash, hero digit roll and breathing label become static |
+| `reduced_motion` | Boolean | user reduce-motion switch (default `false`); combined with the observed OS animation setting, without rewriting this flag; decorative animations become static |
 | `speed_unit` | String | `BYTES` (KB/s · MB/s, default) or `BITS` (Kbps · Mbps) |
 | `accent_color` | String | `INK` (default) / `GREEN` / `BLUE` / `VIOLET` / `SYSTEM` (wallpaper primary, API 31+; behaves as `INK` below) — glass theme accent |
 | `last_speed_down` + `last_speed_up` | Long/Long | last published (smoothed) speeds in B/s; written every 15 s so the status-bar number is meaningful immediately after a service start |
