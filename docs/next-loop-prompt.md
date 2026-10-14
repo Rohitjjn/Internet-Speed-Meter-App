@@ -48,7 +48,11 @@ verify → docs → brainstorm → next prompt) so the project keeps improving i
   installing updates"), CHANGELOG (loop 6), blueprint, schema.
 
 > ✅ Everything in this loop was compiled and unit-tested by CI (see the check runs on the
-> session branch). Nothing was run on a device or emulator — the install-over-update path,
+> session branch): **118 unit tests, green; lint 0 errors** (the 25 remaining notes are the
+> dependency-version and launcher-icon warnings listed under Engineering #1). The first push
+> exposed one compile error and two red tests (a renamed field, an integer-truncation
+> artefact in a test fixture, a dispatcher race between the DataStore write and the in-memory
+> mirror — fixed by flipping the mirror first). Nothing was run on a device or emulator — the install-over-update path,
 > the screen-off receiver, the FileProvider share and the Material You swatch still need a
 > real-device pass.
 
