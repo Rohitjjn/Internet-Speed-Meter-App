@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.example.util.DateFormatter
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -36,9 +37,10 @@ class HistoryViewModel(application: Application) : AndroidViewModel(application)
         repository = DataUsageRepository(database.dataUsageDao())
 
         val calendar = Calendar.getInstance()
-        val currentMonthPrefix = SimpleDateFormat("yyyy-MM", Locale.getDefault()).format(calendar.time) + "-%"
+        // Row keys are Locale.US (see DateFormatter.day); the LIKE prefix must match them.
+        val currentMonthPrefix = DateFormatter.monthPrefix(calendar.time) + "-%"
         calendar.add(Calendar.MONTH, -1)
-        val previousMonthPrefix = SimpleDateFormat("yyyy-MM", Locale.getDefault()).format(calendar.time) + "-%"
+        val previousMonthPrefix = DateFormatter.monthPrefix(calendar.time) + "-%"
         val label = SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(Date())
 
         historyList = repository.allHistory.stateIn(

@@ -131,7 +131,15 @@ class SpeedEngine(
      * a kernel/OEM counter bug (overflow, re-initialised table, interface swap). Such a
      * jump is refused instead of being charged to the session and the daily total.
      */
-    private val maxPlausibleDeltaBytes: Long = 2L * 1024L * 1024L * 1024L
+    private val maxPlausibleDeltaBytes: Long = 2L * 1024L * 1024L * 1024L,
+    /**
+     * Monotonic clock (same time base as the samples' `atMs`, i.e. `elapsedRealtime` in
+     * the service) used for the **session duration**. `null` = the timestamp of the last
+     * sample, which is what the deterministic tests use; the service injects the real
+     * clock so a snapshot taken between two reads — or after the OS froze the process —
+     * reports the time that really passed, not the time of the last tick.
+     */
+    private val clock: (() -> Long)? = null
 ) {
 
     private var anchor: SpeedSample? = null
@@ -165,6 +173,9 @@ class SpeedEngine(
     private var sessionRx = 0L
     private var sessionTx = 0L
     private var sessionStartMs = 0L
+    // Explicit flag instead of "0 means unset": a monotonic clock *can* legitimately
+    // read 0 at the first sample (tests, or a reboot-fresh elapsedRealtime base).
+    private var sessionStarted = false
     private var peakDl = 0L
     private var peakUl = 0L
 
@@ -197,7 +208,10 @@ class SpeedEngine(
         anchor = sample
         windowAnchorMs = sample.atMs
         lastPublishMs = sample.atMs
-        if (sessionStartMs == 0L) sessionStartMs = sample.atMs
+        if (!sessionStarted) {
+            sessionStartMs = sample.atMs
+            sessionStarted = true
+        }
         pendingRx = 0L
         pendingTx = 0L
         windowWifiRx = 0L
@@ -211,7 +225,6 @@ class SpeedEngine(
     fun resetSession(sample: SpeedSample) {
         sessionRx = 0L
         sessionTx = 0L
-        sessionStartMs = sample.atMs
         peakDl = 0L
         peakUl = 0L
         steadyDl = 0.0
@@ -224,7 +237,11 @@ class SpeedEngine(
         uploadHistory.clear()
         averageSamples.clear()
         sessionStartMs = sample.atMs
+        sessionStarted = true
         seed(sample)
+        // Readers (notification, widget, dashboard) must see the cleared totals at once,
+        // not the pre-reset snapshot until the next publish tick.
+        publishSnapshot()
     }
 
     /**
@@ -425,7 +442,7 @@ class SpeedEngine(
             mobileUploadBps = mobileUlRate,
             sessionRxBytes = sessionRx,
             sessionTxBytes = sessionTx,
-            sessionDurationMs = if (sessionStartMs == 0L) 0L else (currentTimeStamp() - sessionStartMs),
+            sessionDurationMs = if (!sessionStarted) 0L else (currentTimeStamp() - sessionStartMs).coerceAtLeast(0L),
             transport = transport,
             downloadHistory = downloadHistory.toList(),
             uploadHistory = uploadHistory.toList(),
@@ -435,8 +452,13 @@ class SpeedEngine(
         )
     }
 
-    /** Overridable clock: the engine needs the timestamp of the *last* sample. */
-    private fun currentTimeStamp(): Long = anchor?.atMs ?: 0L
+    /** The injected monotonic clock, or the timestamp of the last sample when none was given. */
+    private fun currentTimeStamp(): Long {
+        val injected = clock?.invoke()
+        val lastSample = anchor?.atMs ?: 0L
+        // Never report a duration that goes backwards relative to the samples themselves.
+        return if (injected != null && injected >= lastSample) injected else lastSample
+    }
 
     private fun pushHistory(history: ArrayDeque<Long>, value: Long) {
         history.addLast(value)

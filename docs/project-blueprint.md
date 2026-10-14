@@ -25,13 +25,17 @@ Material 3, no third-party SDKs, everything on-device.
 5. **Premium look** — glassy-white light theme (GPT-style glassmorphism: translucent
    cards, soft top highlight, ambient glow blobs) with a full dark variant, an accent
    picker, ink (inverse) accent cards, monospace numerals and animated digits.
-6. **Durable background** — `dataSync` FGS; `onTimeout` restarts with a 20 s backoff at
-   most twice, then stops and hands over to a one-shot WorkManager retry (30 min);
-   60-minute watchdog; boot receiver restart.
-7. **Localizable surfaces first** — the always-visible notification, the network names and
-   the navigation are resource-backed (`values/`, `values-hi/`); the rest of the copy is
-   still Kotlin literals and is being extracted in a dedicated pass
-   (see `docs/next-loop-prompt.md`).
+6. **Durable background** — `dataSync` FGS; `onTimeout` stops the service at once and
+   hands over to a one-shot WorkManager retry (30 min, exponential back-off 10 → 20 → 40 min
+   on `Result.retry()`); 60-minute watchdog; boot receiver restart. An inline restart from
+   the background is refused on API 35+ anyway, so none is attempted.
+7. **Everything localizable** — every user-facing string is a resource in `values/` with a
+   Hindi counterpart in `values-hi/` (229 keys); `StringResourceParityTest` fails the build
+   when a key or a format argument is missing on either side. Technical identifiers that
+   are the same in every language (host names, `Mbps`, `KB/s`, HTTP codes, `/proc/net/dev`)
+   stay literal on purpose.
+8. **A home-screen surface** — a `RemoteViews` widget with today's real total; no Glance
+   dependency, no estimation when the service is not running (it renders the persisted row).
 
 ## Architecture
 
@@ -40,8 +44,18 @@ MainActivity (Splash → Intro → Main)
 └── MainScreen — floating glass-pill nav
     ├── Dashboard  — hero live card + Mobile/Wi-Fi/Today cards
     ├── Speed Test — active measurement (gauge, metrics, history)
-    ├── History    — recorded days + pinned monthly total
-    └── Settings   — appearance, unit, accent, limits, permissions, engine diagnostics
+    ├── History    — recorded days + pinned monthly total + CSV export (two-column ≥ 600 dp)
+    └── Settings   — appearance, unit, accent, limits, permissions, tap-to-save endpoint,
+                     collapsible server + engine diagnostics groups
+
+TodayUsageWidget (AppWidgetProvider, RemoteViews)
+├── rendered from DataUsageEntity(today): total, mobile/Wi-Fi split, render time
+├── pushed by the service after accounting (≤ 1/min, only when an instance exists)
+└── WidgetRefreshWorker — 30 min periodic + one-shot on add/resize (persisted row)
+
+SpeedMeterTile (TileService, Quick Settings)
+├── state = meter running (ACTIVE) / not running (INACTIVE)
+└── subtitle (API 29+) = today's persisted total, "Measuring" or "Meter paused"; tap opens app
 
 SpeedMeterService (foreground, dataSync)
 ├── read loop — 500 ms, Dispatchers.Default
@@ -53,26 +67,42 @@ SpeedMeterService (foreground, dataSync)
 │       session bytes, per-transport rates, transport
 │     → status-bar notification (rebuilt only when visible text changes)
 ├── ConnectivityManager.NetworkCallback → transport push (+30 s self-heal)
-└── accounting loop — 15 s, Dispatchers.IO
-      Usage access ? NetworkStatsManager since midnight − reset baseline
-                   : engine per-transport attribution deltas
-      → Room upsert(daily_data_usage)
+├── accounting loop — 15 s, Dispatchers.IO
+│     Usage access ? NetworkStatsManager since midnight − reset baseline
+│                  : engine per-transport attribution deltas
+│     → Room upsert(daily_data_usage) → widget push
+└── refusal path — startService(): Boolean; a refused/failed foreground start
+      (API 31+ background rule, API 35 dataSync budget) posts the "Speed meter paused"
+      notification (channel speed_meter_status, id 1002, tap → MainActivity), cleared on
+      the next successful onStartCommand; MainActivity.onResume() restarts the meter
 
-SpeedTestEngine (opt-in, Dispatchers.IO)
-├── endpoint: TestServer profile — AUTO (Cloudflare → LibreSpeed fallback),
-│             explicit built-in host, or a custom http(s) URL (2 flavours)
-├── guard: TestDataCost estimate shown before a metered run (~speed × phase budgets)
-├── abort: TestAbortSignal polled by every read loop (network change cancels mid-test)
-├── latency: 5 round trips after a warm-up request → min / average / jitter
-├── download: 4 parallel streams, 8 s budget, bytes actually received
-└── upload: 3 parallel chunked POST streams, 6 s budget, bytes accepted by the socket
-   → SpeedTestViewModel → SpeedTestScreen (gauge + share, last 20 results in DataStore)
-     + NetworkMonitor (fresh transport read for the metered/abort rules)
+SpeedTestEngine (opt-in, Dispatchers.IO) — behind the SpeedTestRunner interface
+├── endpoint: TestServer profile — AUTO (Cloudflare → LibreSpeed fallback **only when the
+│             latency probe fails**), explicit built-in host, or a custom http(s) URL
+├── guard: TestDataCost estimate shown before a metered run (mobile, metered Wi-Fi, VPN
+│          over either — Connectivity.isMetered) + Data Saver note
+├── abort: TestAbortSignal polled by every read loop **and** a per-phase sentinel that
+│          disconnects the live sockets the moment it flips (blocking reads included)
+├── latency: warm-up, then 5 round trips on a kept-alive connection → min / avg / jitter
+├── download: 4 parallel streams, 8 s budget; streams joined before the counter is read;
+│             throughput over the window after a 1.5 s grace (≥ 1 s left) else first byte;
+│             request size adapts — 20 MB first, doubled (≤ 100 MB) whenever the previous
+│             body completed in < 1 s (nextRequestBytes, pure) on a kept-alive connection
+└── upload: 32 KiB acknowledgement POST (2xx/3xx required, code kept in the result),
+            then 3 parallel chunked POST streams, 6 s budget, 1 s grace
+   → SpeedTestViewModel(Connectivity, SpeedTestRunner, PreferencesManager, liveSpeed)
+     abort watcher = Connectivity.transportChanges() (NetworkCallback push + 2 s safety
+     poll) → first transport ≠ transport at start raises TestAbortSignal
+     → SpeedTestScreen (gauge + ghost needle + "vs last test" chip + share,
+       last 20 results in DataStore, two-column ≥ 600 dp)
 
 Supporting
-├── WorkManager SpeedKeepAliveWorker (60 min) + BootCompletedReceiver
+├── WorkManager SpeedKeepAliveWorker (60 min; retries with back-off and posts the paused
+│   notice when the OS refuses the start) + BootCompletedReceiver (same refusal path)
 └── DataStore — theme, accent, speed unit, limit, onboarding, reset baseline,
                 alert dismissal, last known speed, speed-test results
+                (PreferencesManager(context, store) — the store is injectable; tests use
+                 TestPreferences for a per-test file)
 ```
 
 ## Measurement rules (the part that must never regress)
@@ -100,8 +130,8 @@ Supporting
 | `engineStatusFlow` (`EngineStatus`) | service | Settings → Measurement Engine |
 | `todayUsageFlow` | service | notification |
 | `permissionGrantedFlow` | service | settings badge, dashboard hint |
-| `SpeedTestViewModel.state` / `.history` | viewmodel | Speed Test screen (phases, server, `usedFallback`, `pendingConfirmationMb`) |
-| `SpeedTestViewModel` server mirrors (`testServerFlow`, `testServerUrlFlow`, `testServerFlavourFlow`) | DataStore → viewmodel | endpoint resolution for a run, Settings picker |
+| `SpeedTestViewModel.state` / `.history` | viewmodel | Speed Test screen (phases, server, `usedFallback`, `pendingConfirmation*`, `previousResult`, `uploadAckCode`, `aborted`) |
+| `testServerFlow` / `testServerUrlFlow` / `testServerFlavourFlow` | DataStore | read **at run start** by the view model (no mirror copy); Settings highlights the stored value and saves on tap |
 | Room `getDataByDate` / `getAllHistory` / `getThisMonthTotal` | DB | dashboard, history |
 | DataStore flows | PreferencesManager | theme, accent, unit, limit, intro, alerts, last speed |
 
@@ -116,36 +146,55 @@ Supporting
 - `components/Glass.kt` — `AppBackground` (ambient glows), `GlassCard`
   (shadow → clip → fill → 1 dp border → top highlight), `GlassChip`.
 - Motion: hero digit roll (`animateFloatAsState`), instrument gauge (needle sweep over a
-  labelled tick scale), phase-label cross-fade + animated metric readouts, phase progress
-  bar, nav pill width animation, cross-fade between app stages.
-- Layout: single column on phones, two columns from 600 dp (Dashboard), text kept in the
-  glass-card rhythm.
+  labelled tick scale, ghost needle for the previous result), phase-label cross-fade +
+  animated metric readouts, phase progress bar, breathing "waiting" label, nav pill width
+  animation, collapsible Settings groups (`AnimatedVisibility` + rotating chevron),
+  cross-fade between app stages.
+- Layout: single column on phones, two columns from 600 dp (Dashboard, Test, History),
+  text kept in the glass-card rhythm.
+- Accessibility: value texts carry `contentDescription`s (never a `mergeDescendants`
+  container around test-tagged children), polite live regions on phase/status labels and
+  result/error cards, `Role` + `selected` on pickers, labelled icon buttons.
 
 ## Background / OS compatibility notes
 
-- Android 15+: `dataSync` FGS daily budget → `onTimeout` restart strategy.
-- Background FGS start is blocked when the app is stopped → watchdog + boot receiver +
-  on-open restart; failures are caught and logged, never crash.
+- Android 15+: `dataSync` FGS daily budget → `onTimeout` stops immediately and schedules
+  the WorkManager retry (never an inline background restart).
+- `NetworkStatsManager` mobile query uses a `null` subscriber id (no `READ_PHONE_STATE`);
+  on API ≤ 28 a few ROMs answer `0` — the app shows the system figure, never an estimate.
+- Background FGS start is blocked when the app is stopped (API 31+; WorkManager is not an
+  exemption, a notification tap is) → watchdog + boot receiver + on-open/on-resume restart;
+  a refused start is surfaced as the "Speed meter paused" notification, never swallowed.
+- API 35 `dataSync` budget exhaustion makes `startForeground` throw → same paused notice;
+  the service stops itself instead of running un-promoted.
 - Notification icon: white-on-transparent bitmap (alpha = mask), cached per distinct
   speed string; the whole notification is skipped when nothing visible changed.
 - A NetworkCallback may be dropped by some OEM ROMs → the ticker re-resolves the
   transport every 30 s.
-- minSdk 24 / targetSdk 36; Gradle 9.8.1 wrapper + AGP 9.1.1 + JDK 17.
+- minSdk 24 / targetSdk 36; Gradle 9.8.1 wrapper + AGP 9.1.1 + JDK 17+ (CI: 21).
 
 ## Testing
 
-- Pure JVM: `SpeedEngineTest` (the measurement rules above + the implausible-delta
-  ceiling), `SourceHealthTest` (the source-switch rule), `TestServerTest` (endpoint URLs,
-  fallback order, cost estimate), `ExampleUnitTest` (formatters, bits/bytes modes,
-  `/proc/net/dev` parser, interface classification, gauge scale, jitter, speed-test result
-  serialization), `AccountingTest` (baselines, clamping, rollover).
-- Robolectric: `HistoryDatabaseTest` (Room), `DashboardViewModelTest` (state),
-  `PreferencesManagerTest` (DataStore round-trips), `DashboardUiSmokeTest` (Compose render
-  of the hero + usage cards).
+- Pure JVM: `SpeedEngineTest` (the measurement rules above, the implausible-delta
+  ceiling, the injected clock, bounded history over a long run), `SourceHealthTest` (the
+  source-switch rule), `SpeedTestMathTest` (grace-window throughput, adaptive request
+  sizing, `DeltaMath`, `UsageCsv`), `TestServerTest` (endpoint URLs, fallback order, cost estimate),
+  `ExampleUnitTest` (formatters, bits/bytes modes, `/proc/net/dev` parser, interface
+  classification, gauge scale, jitter, speed-test result serialization), `AccountingTest`
+  (baselines, clamping, rollover), `StringResourceParityTest` (en ⇄ hi).
+- Robolectric: `SpeedTestViewModelTest` (fake connectivity + fake runner: every rule of the
+  active test), `SettingsViewModelTest`, `HistoryDatabaseTest` (Room),
+  `DashboardViewModelTest` (state), `PreferencesManagerTest` (DataStore round-trips on an
+  isolated store), `DashboardUiSmokeTest` (Compose render of the hero + usage cards),
+  `ScreensRenderTest` (Settings + idle speed-test screen against fakes),
+  `TodayUsageWidgetTest` (RemoteViews carry the real total).
 - Instrumented (network-gated, skips without a connection):
-  `SpeedTestEngineInstrumentedTest` — real 2 s download, latency probe, abort behaviour.
-- CI (`.github/workflows/android-build.yml`): unit-test job, non-blocking lint job,
-  manual build/release job (see README).
+  `SpeedTestEngineInstrumentedTest` — real 2 s download, latency probe, upload
+  acknowledgement, abort behaviour.
+- CI (`.github/workflows/android-build.yml`): on **every push** the unit-test job and the
+  non-blocking lint job run and publish condensed check runs ("Unit test log", "Lint
+  log") via `.github/scripts/publish_check.py`; the build/release job runs on manual
+  dispatch only (see README). Raw Actions logs are not needed to read a failure.
 
 ## Out of scope (by design)
 

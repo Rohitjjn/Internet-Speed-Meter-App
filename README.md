@@ -55,24 +55,39 @@ The passive meter shows what the device is *using* (near 0 on an idle phone), wh
 never tell you the *capacity* of your line. Dashboard → **Test → START TEST** measures it
 for real over the network (plain `HttpURLConnection`, no third-party SDK):
 
-- **Latency + jitter** — 5 round trips after a throw-away warm-up request.
-- **Download** — 4 parallel streams from the selected endpoint for 8 s.
-- **Upload** — 3 parallel chunked POST streams for 6 s.
+- **Latency + jitter** — 5 round trips on a **kept-alive** connection after a throw-away
+  warm-up request, so a "ping" is a round trip and never a TLS handshake.
+- **Download** — 4 parallel streams from the selected endpoint for 8 s. Each stream asks
+  for 20 MB and **doubles its next request (up to 100 MB) whenever the previous body
+  finished in under a second**, reusing the kept-alive connection — so a gigabit line is
+  never throttled by request setup, while a slow link keeps spending small bodies.
+- **Upload** — the server first has to **acknowledge** a fixed 32 KiB POST with a 2xx/3xx
+  (an endpoint that only discards bytes, or a captive portal, fails the phase instead of
+  producing a fantasy number); then 3 parallel chunked POST streams for 6 s.
 - Result = `bits × 8 ÷ seconds`, shown in **Mbps** (the unit ISPs advertise), with the
-  last 20 results kept on-device. The divisor is the window that *actually carried data*
-  (first byte → deadline) and the live needle/animation is fed measured intervals too, so
+  last 20 results kept on-device. The divisor is the window that *actually carried data*:
+  a short **grace period** (1.5 s download / 1 s upload — TCP slow start and connection
+  ramp-up) is excluded when at least one full second remains after it, otherwise the span
+  from the first byte is used. Streams are **joined** before the final byte count is read,
+  so in-flight bytes are never lost, and the live needle is fed measured intervals too —
   TCP/TLS setup and coroutine scheduling can never deflate or inflate the number.
+- The previous result is drawn as a **ghost needle** on the dial and summarised as a
+  "↑ 12 % vs last test" chip — both from the stored history, never extrapolated.
 
 Three rules protect the user and the result:
 
 | Rule | Why |
 |---|---|
 | **Endpoint profiles with fallback** — `AUTO` uses `speed.cloudflare.com`, and retries on the LibreSpeed public backend when that host cannot answer the latency probe (corporate DNS, some ISPs). A custom `http(s)` host can be configured (Cloudflare- or LibreSpeed-style layout) | A blocked host must not make the feature dead — and the result card always names the host that produced the numbers |
-| **Metered-data confirmation** — on mobile data the app asks first with a real estimate (~`line speed × 8 s + 6 s`, floor 5 MB, +10 % overhead) | The test really transfers data; a silent 30 MB is not acceptable |
-| **Abort on network change** — the phases poll a cooperative abort signal, so a Wi-Fi → mobile switch stops the run in a fraction of a second | Otherwise the result would mix two connections *and* keep spending mobile data |
+| **Metered-data confirmation** — on mobile data, a metered Wi-Fi hotspot or a VPN over either (`ConnectivityManager.isActiveNetworkMetered`) the app asks first with a real estimate (~`line speed × 8 s + 6 s`, floor 5 MB, +10 % overhead) and notes when Data Saver is on | The test really transfers data; a silent 30 MB is not acceptable |
+| **Abort on network change** — the phases poll a cooperative abort signal **and** a sentinel disconnects the live sockets the moment it flips, so a Wi-Fi → mobile switch stops the run in well under a second even inside a blocking read | Otherwise the result would mix two connections *and* keep spending mobile data |
+| **Fallback only on unreachability** — `AUTO` moves to the second host only when the *latency probe* fails; a failed download/upload is reported as such | Retrying a whole download on another host would just spend more data |
 
 The test runs **only** when you tap the button; it sends no identifiers and stores
 nothing but the four numbers you can see. Results can be shared as plain text (no SDK).
+Every rule above is unit-tested with a fake connectivity probe and a fake runner
+(`SpeedTestViewModelTest`); the real engine maths (`computeThroughput`) is covered by
+`SpeedTestMathTest`.
 
 ### Daily usage ("Mobile today" / "Wi-Fi today")
 
@@ -84,18 +99,52 @@ nothing but the four numbers you can see. Results can be shared as plain text (n
 
 ### Verify it yourself
 
-Settings → **Measurement Engine** shows the engine's raw inputs: active counter source,
-read cadence, last window, session samples, and the kernel interface totals
-(`wlan0`, `rmnet_data0`, …). Nothing in that panel is estimated.
+Settings → **Measurement Engine** (collapsed by default, with a one-line status) shows the
+engine's raw inputs: active counter source, read cadence, last window, session samples,
+and the kernel interface totals (`wlan0`, `rmnet_data0`, …). Nothing in that panel is
+estimated. History → **share** exports the stored days as CSV (raw bytes, no rounding),
+through the system share sheet — no file, no storage permission.
+
+> Note on `NetworkStatsManager`: on API ≤ 28 the mobile query runs with a `null`
+> subscriber id (the app deliberately has no `READ_PHONE_STATE`) and a few ROMs answer `0`
+> for it. With Usage access granted the system counters are authoritative, so such a device
+> shows what the system reports — the app never substitutes an estimate. Without the
+> permission the daily cards come from the engine's own per-transport attribution instead.
 
 ### Background behaviour (Android 15/16)
 
 `dataSync` foreground services get a daily budget. When the system calls `onTimeout`, the
-restart is **delayed by 20 s** and allowed at most twice in a row; after that the service
-stops cleanly and a one-shot WorkManager retry (30 min) picks it up — a tight
-restart loop would only burn the remaining budget faster. A 60-minute WorkManager watchdog
-(`SpeedKeepAliveWorker`) restarts the service if it was killed (e.g. after an app update or
-a device reboot — the boot receiver restarts it too).
+service **stops at once** (it must, or the app is reported as not responding) and hands
+the restart to a one-shot WorkManager request (30 min, then exponential back-off
+10 → 20 → 40 min if the budget has not rolled over) — an in-process restart from the
+background would be refused anyway, and a tight loop would only burn the remaining budget.
+A 60-minute WorkManager watchdog (`SpeedKeepAliveWorker`) restarts the service if it was
+killed (e.g. after an app update or a device reboot — the boot receiver restarts it too).
+
+**A refused restart is never silent.** Since Android 12 a foreground service may not be
+started from the background (WorkManager is *not* an exemption), and on Android 15 the
+`dataSync` budget can be exhausted. Whenever a start is refused — by the timeout, by the
+watchdog, by the boot receiver or by `startForeground` itself — the app posts a low-priority
+**"Speed meter paused"** notification that says plainly that nothing is being counted and
+that a tap resumes the meter (a notification tap, like opening the app, *is* allowed to start
+the service). The notification is cleared automatically the moment the meter is running
+again, and opening the app re-starts the meter on every resume.
+
+### Home-screen widget
+
+**Today's usage** (2×1, resizable) shows today's real total with the mobile / Wi-Fi split
+and the time it was rendered. Plain `RemoteViews` (no Glance): the running service pushes
+the row it just wrote (at most once a minute, only when a widget is placed), a 30-minute
+`WidgetRefreshWorker` covers the case the service is not running, and the launcher's own
+update period re-renders it too. Tapping it opens the app.
+
+### Quick Settings tile
+
+**Speed Meter** can be added to the notification shade. It is a launcher, not a live
+meter: its state mirrors whether the meter is running and its subtitle (Android 10+) is
+today's **persisted** total — the row the service wrote from OS counters — or "Meter
+paused". It never shows a speed, because a tile cannot follow one without keeping the
+process awake.
 
 ---
 
@@ -108,13 +157,18 @@ a device reboot — the boot receiver restarts it too).
 - 👥 Per-network split: real bytes attributed to Wi-Fi vs mobile while they happen
 - 📊 Session total, session peak, 1-minute average and 30-second sparkline
 - 📱 Mobile & Wi-Fi daily usage cards (real counters)
-- 🗓 History (all recorded days, newest first) + pinned monthly total, clear option
+- 🗓 History (all recorded days, newest first) + pinned monthly total, CSV export via the
+  share sheet, clear option; two-column on tablets / landscape
+- 🏠 Home-screen widget with today's real total (mobile / Wi-Fi split) + Quick Settings tile
 - 🎚 Optional daily mobile **warning** limit (MB/GB) — alerts at 50 % / 90 % / 100 %
   with a buzz; the app never blocks data
 - 🌗 Glassy light + dark theme (GPT-style glassmorphism) + accent picker
 - 🔔 Status-bar notification with live speed + custom speed glyph icon
-- 🌐 Hindi (`values-hi`) for the status-bar notification, network names and navigation —
-  the rest of the copy is still being extracted (see the next-loop prompt)
+- 🌐 Fully localizable: **every** user-facing string lives in `values/strings.xml` with a
+  Hindi counterpart in `values-hi/` (236 keys, parity enforced by `StringResourceParityTest`)
+- ♿ Accessibility: content descriptions on the live numbers, the gauge and every icon
+  button; polite live regions for phase/status changes; selection semantics on pickers;
+  no text below 10 sp; one haptic tick when a test result lands
 - 🧾 Privacy: no `ACCESS_WIFI_STATE` / `READ_PHONE_STATE`; `INTERNET` exists **only**
   for the manual speed test, no analytics, no accounts, everything on-device
 
@@ -127,7 +181,7 @@ a device reboot — the boot receiver restarts it too).
 automatically on first sync.
 
 1. Open the project directory in Android Studio.
-2. Let it sync (Gradle 9.8.1 wrapper + AGP 9.1.1, JDK 17).
+2. Let it sync (Gradle 9.8.1 wrapper + AGP 9.1.1, JDK 17+ — CI uses 21).
 3. Run the `app` configuration on an emulator or device (min API 24).
 
 > Old AI Studio step (`.env` / `GEMINI_API_KEY`) is no longer needed —
@@ -141,25 +195,44 @@ automatically on first sync.
 
 Covers the measurement core without a device: `SpeedEngineTest` (independent directions,
 measured windows, suspended-process guard, counter resets, implausible-delta ceiling,
-per-transport attribution), `SourceHealthTest` (the flap-free source-switch rule),
-`TestServerTest` (endpoint URLs, fallback order, data-cost estimate), `ExampleUnitTest`
-(formatters, bits/bytes modes, `/proc/net/dev` parser, gauge scale, jitter, result
-serialization), `AccountingTest` (reset baselines, clamping, midnight rollover),
-`PreferencesManagerTest` (DataStore round-trips), `HistoryDatabaseTest` (Room) and
-`DashboardUiSmokeTest` (Robolectric Compose render).
+per-transport attribution, injected monotonic clock, bounded history over a 20-minute run),
+`SourceHealthTest` (the flap-free source-switch rule), `SpeedTestViewModelTest` (metered
+confirmation, AUTO fallback only on unreachability, explicit endpoint never falls back,
+abort on transport change, previous result for the ghost needle, STOP → idle),
+`SpeedTestMathTest` (grace-window throughput, adaptive request sizing, "vs last"
+percentages, CSV export),
+`TestServerTest` (endpoint URLs, fallback order, data-cost estimate), `SettingsViewModelTest`
+(endpoint auto-save round-trips), `ExampleUnitTest` (formatters, bits/bytes modes,
+`/proc/net/dev` parser, gauge scale, jitter, result serialization), `AccountingTest` (reset
+baselines, clamping, midnight rollover), `PreferencesManagerTest` (DataStore round-trips),
+`HistoryDatabaseTest` (Room), `StringResourceParityTest` (English ⇄ Hindi key and
+format-argument parity), `TodayUsageWidgetTest` (the widget's `RemoteViews` carry the
+real total) and the Robolectric Compose renders `DashboardUiSmokeTest` + `ScreensRenderTest`
+(Settings and the idle speed-test screen against fakes).
+
+Tests never touch the app's real DataStore: `PreferencesManager` takes its `DataStore`
+as a constructor parameter and `TestPreferences` hands each test an isolated file.
 
 On a device (network-gated, skips without a connection):
 
 ```bash
-./gradlew :app:connectedDebugAndroidTest   # runs SpeedTestEngineInstrumentedTest
+./gradlew :app:connectedDebugAndroidTest   # SpeedTestEngineInstrumentedTest: download, latency, upload ack, abort
 ```
 
 ---
 
 ## Build & release (GitHub Actions)
 
-`.github/workflows/android-build.yml` is a **manual workflow**
-(*Actions → Android Build & Release → Run workflow*) with these inputs:
+`.github/workflows/android-build.yml` does two things:
+
+- **On every push** (any branch; Markdown/docs-only pushes are skipped) it compiles the
+  app and runs the unit tests plus a non-blocking lint pass. Both publish their condensed
+  output as **check runs** ("Unit test log", "Lint log" — compiler errors, failing tests,
+  lint warnings) with inline annotations, so a failure is readable from the commit's
+  checks tab without downloading the raw log (`.github/scripts/publish_check.py`, stdlib
+  only).
+- **Manually** (*Actions → Android Build & Release → Run workflow*) it additionally builds
+  and optionally releases the APK, with these inputs:
 
 | Input | Meaning |
 |---|---|
@@ -171,7 +244,7 @@ On a device (network-gated, skips without a connection):
 | `release_notes` | Markdown body for the release |
 | `create_release` | `yes` → create/update the GitHub release with the APK |
 
-The workflow runs the unit tests, builds the APK, uploads it as a build
+The manual run executes the unit tests, builds the APK, uploads it as a build
 artifact **and** (optionally) to a GitHub Release. Re-running with the same
 tag **overwrites** the APK asset in place.
 
@@ -205,19 +278,31 @@ app/src/main/java/com/example/
 │   │                          #   last speed, speed-test results
 │   └── UsageResetter.kt       # single reset path (service path uses its own)
 ├── services/
-│   ├── SpeedMeterService.kt   # 500 ms read loop + 15 s accounting + notification
+│   ├── SpeedMeterService.kt   # 500 ms read loop + 15 s accounting + notification + widget push,
+│   │                          #   "meter paused" notice when a foreground start is refused
 │   ├── SpeedEngine.kt         # pure measurement maths (unit-tested, no Android)
 │   ├── SourceHealth.kt        # pure source-switch rule (TrafficStats ⇄ /proc/net/dev)
 │   ├── TrafficCounterReader.kt# TrafficStats / /proc/net/dev + per-interface parser
-│   ├── SpeedTestEngine.kt     # active ping/download/upload measurement + abort signal
+│   ├── SpeedTestEngine.kt     # ping/download/upload measurement, grace window, upload ack,
+│   │                          #   abort signal + socket sentinel, SpeedTestRunner interface
 │   ├── TestServer.kt          # endpoint profiles (Cloudflare/LibreSpeed/custom) + cost
-│   ├── NetworkMonitor.kt      # fresh transport read for the metered check/abort rule
-│   └── ServiceScheduler.kt    # WorkManager keep-alive, timeout retry + boot handling
+│   ├── NetworkMonitor.kt      # Connectivity (transport / metered / Data Saver) + pushed
+│   │                          #   transportChanges() flow (NetworkCallback), injectable
+│   └── ServiceScheduler.kt    # WorkManager keep-alive, timeout retry with back-off
+├── widget/
+│   ├── TodayUsageWidget.kt    # AppWidgetProvider + RemoteViews renderer
+│   └── WidgetRefreshWorker.kt # 30-min refresh from the persisted daily row
+├── tile/
+│   └── SpeedMeterTile.kt      # Quick Settings tile (state = meter running, subtitle = today)
+├── util/
+│   ├── Formatting.kt          # SpeedFormatter / BytesFormatter / DateFormatter / DeltaMath
+│   └── UsageCsv.kt            # pure CSV builder for the History export
 └── ui/
     ├── components/            # AppBackground, GlassCard, GlassChip, AppIcon
     ├── screens/               # Dashboard, Speed Test, History, Settings, Intro, Splash
     ├── theme/                 # glass palettes (light + dark), Material 3
-    ├── ../res/values-hi/      # Hindi notification, network names, navigation
+    ├── ../res/values-hi/      # Hindi for every string (parity-tested)
+    ├── ../res/layout + xml/   # widget layout + provider info
     ├── util/                  # secondary()/dlColor()/ulColor()/toBytes()
     └── viewmodel/             # Dashboard / SpeedTest / History / Settings VMs
 ```

@@ -1,10 +1,15 @@
 # Database schema
 
-**Database**: `speed_data_tracker_db` (Room, **version 3**, `fallbackToDestructiveMigration`).
+**Database**: `speed_data_tracker_db` (Room, **version 3**,
+`fallbackToDestructiveMigration(dropAllTables = true)`).
 
-No Room schema change was needed for the endpoint/abort work: speed-test results and
-display preferences live in DataStore (see the bottom of this file), and the daily table
-keeps exactly the same four real counters per transport.
+No Room schema change was needed for the speed-test, widget or export work: speed-test
+results and display preferences live in DataStore (see the bottom of this file), the daily
+table keeps exactly the same four real counters per transport, and the CSV export / widget
+only *read* it.
+
+`date` keys are always written with `Locale.US` digits (`DateFormatter.day()`), so a device
+in a Hindi/Arabic-digit locale cannot split one day into two rows.
 
 One table only — the app stores **real counters**, never simulated data.
 
@@ -30,7 +35,7 @@ Entity: `DataUsageEntity` with derived `mobileTotal`, `wifiTotal`, `total`.
 |---|---|
 | `upsertData(entity)` | `INSERT` with `OnConflictStrategy.REPLACE` |
 | `getDataByDate(date): Flow<Entity?>` | live Flow for the dashboard cards |
-| `getByDate(date): Entity?` | one-shot read (service path, external-reset detection) |
+| `getByDate(date): Entity?` | one-shot read (service path, external-reset detection, widget refresh) |
 | `getAllHistory(): Flow<List<Entity>>` | all recorded days, newest first |
 | `getThisMonthTotal(monthPrefix): Flow<Long>` | `COALESCE(SUM(mobileRx + mobileTx + wifiRx + wifiTx), 0) WHERE date LIKE 'YYYY-MM-%'` |
 | `deleteByDate(date)` | "reset today" (integrated path re-seeds from the missing row) |
@@ -52,9 +57,22 @@ Only the foreground service writes this table (single writer, no contention):
    Accumulators are re-seeded from the DB row after a service/process restart, and zeroed
    on midnight rollover or when the row is deleted externally (the "reset today" gesture).
 
+## Who reads the table
+
+| Reader | Path |
+|---|---|
+| Dashboard / History screens | `getDataByDate` / `getAllHistory` / `getThisMonthTotal` Flows |
+| History → export | `UsageCsv.build(rows)` — header + one line per day, raw bytes, newest first; shared as text through `ACTION_SEND` (no file is written) |
+| `TodayUsageWidget` | the service's in-memory `todayUsageFlow` while it runs, otherwise `getByDate(today)` from `WidgetRefreshWorker` (every 30 min) |
+| `SpeedMeterTile` (Quick Settings) | `getByDate(today)` once per `onStartListening` (shade opened) → subtitle; never a live value |
+| Status-bar notification | the service's own row (`todayUsageFlow`) |
+
 ## DataStore (not SQL, but persisted app state)
 
-File `speed_meter_prefs.preferences_pb` (see `PreferencesManager`):
+File `speed_meter_prefs.preferences_pb` (see `PreferencesManager`). The `DataStore`
+instance is a constructor parameter (`PreferencesManager(context, store = context.dataStore)`),
+so unit tests run against an isolated per-test file (`TestPreferences`) and never read or
+write the real one.
 
 | Key | Type | Purpose |
 |---|---|---|

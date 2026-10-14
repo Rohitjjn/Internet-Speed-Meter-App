@@ -12,6 +12,10 @@
 
 # WorkManager workers are discovered by class name.
 -keep class com.example.services.SpeedKeepAliveWorker { *; }
+-keep class com.example.widget.WidgetRefreshWorker { *; }
+
+# The widget provider is instantiated by the launcher through the manifest.
+-keep class com.example.widget.TodayUsageWidget { *; }
 
 # Keep the data usage entity field names in case of any reflection.
 -keepclassmembers class com.example.data.DataUsageEntity {

@@ -132,11 +132,12 @@ class TestServerTest {
 
     @Test
     fun estimateWithoutUploadIgnoresTheUploadBudget() {
-        val withUpload = TestDataCost.estimateBytes(2_000_000L, 1_000_000L, uploadEnabled = true)
-        val withoutUpload = TestDataCost.estimateBytes(2_000_000L, 1_000_000L, uploadEnabled = false)
+        val withUpload = TestDataCost.estimateBytes(3_000_000L, 1_000_000L, uploadEnabled = true)
+        val withoutUpload = TestDataCost.estimateBytes(3_000_000L, 1_000_000L, uploadEnabled = false)
         assertTrue(withoutUpload < withUpload)
 
-        // 8 s of 3 MB/s ≈ 24 MB, 1.1 overhead ≈ 26.4 MB.
+        // 8 s of 3 MB/s = 24 MB, × 1.1 overhead = 26.4 MB (≈ 25.2 MiB).
+        assertEquals((24_000_000L * 1.1).toLong(), withoutUpload)
         assertTrue(withoutUpload in (20L * 1024L * 1024L)..(32L * 1024L * 1024L))
     }
 

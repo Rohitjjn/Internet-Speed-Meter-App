@@ -10,10 +10,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -48,7 +46,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,10 +63,9 @@ import com.example.ui.components.AppIcon
 import com.example.ui.theme.glassBorder
 import com.example.ui.theme.glassColor
 import com.example.ui.util.secondary
+import com.example.util.DateFormatter
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 sealed class Screen(val route: String, val title: String) {
@@ -91,19 +87,19 @@ fun MainScreen() {
     val preferencesManager = remember { PreferencesManager(context) }
     val scope = rememberCoroutineScope()
 
-    // Keep the meter alive (Android 14/15 background-start restictions).
+    // Keep the meter alive (Android 14/15 background-start restrictions).
     LaunchedEffect(Unit) {
         ServiceScheduler.schedule(context)
     }
 
     // Track "today" so midnight rollovers refresh the alert logic.
     var todayString by remember {
-        mutableStateOf(SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date()))
+        mutableStateOf(DateFormatter.day())
     }
     LaunchedEffect(Unit) {
         while (true) {
             delay(5000)
-            todayString = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+            todayString = DateFormatter.day()
         }
     }
 
@@ -153,15 +149,24 @@ fun MainScreen() {
             },
             title = {
                 Text(
-                    text = if (level >= 100L) "Daily Mobile Limit Reached!" else "Mobile Data Warning",
+                    text = if (level >= 100L) {
+                        stringResource(R.string.limit_alert_title_reached)
+                    } else {
+                        stringResource(R.string.limit_alert_title_warning)
+                    },
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.error
                 )
             },
             text = {
                 Text(
-                    text = "You have used $level% of your daily mobile data limit.\n\n" +
-                        "Used: ${formatBytesWarning(mobileUsed)} of ${mobileLimit} ${mobileLimitUnit}.",
+                    text = stringResource(
+                        R.string.limit_alert_body,
+                        level,
+                        formatBytesWarning(mobileUsed),
+                        formatLimitValue(mobileLimit),
+                        mobileLimitUnit
+                    ),
                     color = secondary()
                 )
             },
@@ -177,7 +182,7 @@ fun MainScreen() {
                         contentColor = MaterialTheme.colorScheme.onPrimary
                     )
                 ) {
-                    Text("OK")
+                    Text(stringResource(R.string.action_ok))
                 }
             },
             shape = RoundedCornerShape(24.dp),
@@ -346,6 +351,10 @@ private fun vibrateLimitAlert(context: Context, level: Long) {
         e.printStackTrace()
     }
 }
+
+/** "2" for 2.0, "1.5" for 1.5 — the limit as the user typed it, not as a Double prints. */
+private fun formatLimitValue(limit: Double): String =
+    if (limit % 1.0 == 0.0) limit.toLong().toString() else limit.toString()
 
 private fun formatBytesWarning(bytes: Long): String {
     val mb = bytes / (1024.0 * 1024.0)

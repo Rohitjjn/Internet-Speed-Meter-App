@@ -1,26 +1,263 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!--
-        Hindi (hi) — the largest part of this app's audience.
-        Only the strings that are *already* extracted from the Compose code are translated
-        here; body copy is still hard-coded in Kotlin and will follow in the dedicated
-        strings refactor (see docs/next-loop-prompt.md).
-    -->
+
+    <!-- App -->
     <string name="app_name">इंटरनेट स्पीड मीटर</string>
 
+    <!-- Status-bar notification (the always-visible surface, so it is fully localizable). Keep the arrow glyphs: they are language-neutral and read the same in Hindi. -->
     <string name="notification_channel_name">लाइव स्पीड टिकर</string>
-    <string name="notification_channel_description">स्टेटस बार में रीयल-टाइम इंटरनेट स्पीड दिखाता है।</string>
+    <string name="notification_channel_description">स्टेटस बार में रियल-टाइम इंटरनेट स्पीड दिखाता है।</string>
     <string name="notification_speed_title">↓ %1$s  ↑ %2$s</string>
     <string name="notification_text">%1$s · आज %2$s</string>
     <string name="notification_paused_suffix"> · रुका हुआ</string>
+    <string name="notification_status_channel_name">मीटर स्थिति</string>
+    <string name="notification_paused_title">स्पीड मीटर रुका हुआ है</string>
+    <string name="notification_paused_text">Android ने बैकग्राउंड मीटर रोक दिया (बैकग्राउंड सेवाओं की दैनिक सीमा)। रुके रहने के दौरान कुछ भी गिना नहीं जाता — फिर से शुरू करने के लिए टैप करें।</string>
 
-    <string name="network_wifi">वाई-फ़ाई</string>
+    <!-- Network names (notification + chips) -->
+    <string name="network_wifi">Wi-Fi</string>
     <string name="network_mobile">मोबाइल</string>
     <string name="network_ethernet">ईथरनेट</string>
-    <string name="network_vpn">वीपीएन</string>
+    <string name="network_vpn">VPN</string>
     <string name="network_offline">ऑफ़लाइन</string>
 
+    <!-- Bottom navigation -->
     <string name="nav_speed">स्पीड</string>
     <string name="nav_test">टेस्ट</string>
     <string name="nav_history">इतिहास</string>
     <string name="nav_settings">सेटिंग्स</string>
+
+    <!-- Shared actions + units -->
+    <string name="action_ok">ठीक है</string>
+    <string name="action_cancel">रद्द करें</string>
+    <string name="action_reset">रीसेट</string>
+    <string name="action_purge">मिटाएँ</string>
+    <string name="action_purge_all">सब मिटाएँ</string>
+    <string name="action_clear">साफ़ करें</string>
+    <string name="action_grant">अनुमति दें</string>
+    <string name="action_next">आगे</string>
+    <string name="action_start">शुरू करें</string>
+    <string name="action_share">शेयर</string>
+    <string name="action_start_test">टेस्ट शुरू करें</string>
+    <string name="action_stop_test">टेस्ट रोकें</string>
+    <string name="action_test_again">फिर से टेस्ट करें</string>
+    <string name="action_run_test">टेस्ट चलाएँ</string>
+    <string name="unit_ms">ms</string>
+    <string name="label_download">डाउनलोड</string>
+    <string name="label_upload">अपलोड</string>
+    <string name="label_down">डाउन</string>
+    <string name="label_up">अप</string>
+    <string name="label_ping">पिंग</string>
+    <string name="label_today">आज</string>
+    <string name="label_today_word">आज</string>
+    <string name="duration_hours_minutes">%1$d घं %2$d मि</string>
+    <string name="duration_minutes">%1$d मि</string>
+
+    <!-- Intro / onboarding -->
+    <string name="intro_eyebrow_0">रियल-टाइम स्पीड</string>
+    <string name="intro_eyebrow_1">सटीक ट्रैकिंग</string>
+    <string name="intro_eyebrow_2">सिस्टम एक्सेस</string>
+    <string name="intro_eyebrow_3">लगभग तैयार</string>
+    <string name="intro_title_0">लाइव स्पीड मीटर</string>
+    <string name="intro_title_1">भरोसेमंद डेटा</string>
+    <string name="intro_title_2">ज़रूरी अनुमतियाँ चालू करें</string>
+    <string name="intro_title_3">सब तैयार है</string>
+    <string name="intro_body_0">डाउनलोड और अपलोड स्पीड हर सेकंड बदलते देखें — ऐप में और आपके स्टेटस बार में।</string>
+    <string name="intro_body_1">असली सिस्टम काउंटर मोबाइल और Wi-Fi पर आपका उपयोग मापते हैं, रोज़ाना के इतिहास के साथ। कोई नकली आँकड़े नहीं।</string>
+    <string name="intro_body_3">मीटर बैकग्राउंड में लाइव स्पीड टिकर के साथ चलता रहता है। एक टैप पर वापस।</string>
+    <string name="intro_perm_ticker_title">स्टेटस-बार टिकर</string>
+    <string name="intro_perm_ticker_active">दिख रहा है</string>
+    <string name="intro_perm_ticker_hint">लाइव स्पीड दिखाता है</string>
+    <string name="intro_perm_usage_active">सक्रिय</string>
+    <string name="intro_perm_usage_hint">सटीक दैनिक कुल के लिए</string>
+    <string name="a11y_back">पीछे</string>
+    <string name="a11y_granted">अनुमति मिली</string>
+
+    <!-- Dashboard -->
+    <string name="dashboard_title">स्पीड</string>
+    <string name="a11y_network_type">नेटवर्क प्रकार</string>
+    <string name="a11y_reset_today">आज का उपयोग रीसेट करें</string>
+    <string name="a11y_live_download">लाइव डाउनलोड स्पीड %1$s</string>
+    <string name="a11y_live_upload">लाइव अपलोड स्पीड %1$s</string>
+    <string name="hero_peak">पीक %1$s</string>
+    <string name="hero_one_minute_average">1 मिनट औसत</string>
+    <string name="hero_this_session">यह सत्र</string>
+    <string name="hero_session_just_started">अभी शुरू हुआ</string>
+    <string name="hero_last_30_seconds">पिछले 30 सेकंड</string>
+    <string name="hero_status_paused">रुका हुआ — इंजन निलंबित</string>
+    <string name="hero_status_realtime">रियल-टाइम</string>
+    <string name="hero_status_waiting">इंजन की प्रतीक्षा</string>
+    <string name="usage_mobile_title">मोबाइल डेटा</string>
+    <string name="total_today_title">आज का कुल</string>
+    <string name="total_mobile_limit">मोबाइल सीमा %1$s</string>
+    <string name="usage_access_title">उपयोग एक्सेस</string>
+    <string name="usage_access_hint_body">लाइव स्पीड हर जगह काम करती है। सटीक दैनिक कुल के लिए उपयोग एक्सेस दें।</string>
+    <string name="reset_today_title">आज का उपयोग रीसेट करें</string>
+    <string name="reset_today_body">आज के काउंटर शून्य कर दिए जाएँगे। इसे पलटा नहीं जा सकता।</string>
+
+    <!-- Daily mobile-limit warning (the app only warns — never blocks) -->
+    <string name="limit_alert_title_warning">मोबाइल डेटा चेतावनी</string>
+    <string name="limit_alert_title_reached">दैनिक मोबाइल सीमा पूरी हुई!</string>
+    <string name="limit_alert_body">आपने अपनी दैनिक मोबाइल डेटा सीमा का %1$d%% उपयोग कर लिया है।\n\nउपयोग: %3$s %4$s में से %2$s।</string>
+
+    <!-- Speed test -->
+    <string name="test_eyebrow">असली माप</string>
+    <string name="test_title">स्पीड टेस्ट</string>
+    <string name="test_phase_idle">तैयार — शुरू करें दबाएँ</string>
+    <string name="test_phase_ping">%1$s को पिंग कर रहे हैं</string>
+    <string name="test_phase_download">डाउनलोड माप रहे हैं…</string>
+    <string name="test_phase_upload">अपलोड माप रहे हैं…</string>
+    <string name="test_phase_done">टेस्ट पूरा</string>
+    <string name="test_phase_stopped">टेस्ट रोका गया</string>
+    <string name="test_phase_failed">टेस्ट विफल</string>
+    <string name="test_server_fallback">%1$s · फ़ॉलबैक सर्वर</string>
+    <string name="test_latest_result">ताज़ा परिणाम</string>
+    <string name="a11y_share_result">परिणाम शेयर करें</string>
+    <string name="result_server">सर्वर</string>
+    <string name="result_jitter">जिटर</string>
+    <string name="result_download">डाउनलोड</string>
+    <string name="result_upload">अपलोड</string>
+    <string name="result_upload_check">अपलोड जाँच</string>
+    <string name="result_upload_check_value">सर्वर ने स्वीकारा · HTTP %1$d</string>
+    <string name="result_completed">पूरा हुआ</string>
+    <string name="test_fallback_note">डिफ़ॉल्ट सर्वर ने जवाब नहीं दिया, इसलिए यह परिणाम फ़ॉलबैक होस्ट से है।</string>
+    <string name="delta_vs_last_test_up">↑ पिछले टेस्ट से %1$d%% ज़्यादा</string>
+    <string name="delta_vs_last_test_down">↓ पिछले टेस्ट से %1$d%% कम</string>
+    <string name="delta_vs_last_test_same">पिछले टेस्ट जितना</string>
+    <string name="test_stopped">टेस्ट रोका गया</string>
+    <string name="test_error_title_failed">टेस्ट पूरा नहीं हो सका</string>
+    <string name="test_error_hint">अपना कनेक्शन जाँचें और फिर कोशिश करें।</string>
+    <string name="test_error_unreachable">%1$s ने जवाब नहीं दिया। आपका नेटवर्क या DNS इसे रोक सकता है — AUTO फ़ॉलबैक होस्ट आज़माता है।</string>
+    <string name="test_error_no_download_data">%1$s ने कनेक्शन स्वीकारा पर कोई डेटा नहीं भेजा।</string>
+    <string name="test_error_no_upload_endpoint">%1$s अपलोड स्वीकार नहीं करता — अपलोड के लिए दूसरा सर्वर चुनें।</string>
+    <string name="test_error_upload_rejected">%1$s ने अपलोड अस्वीकार किया (HTTP %2$d)।</string>
+    <string name="test_error_upload_not_acknowledged">%1$s ने अपलोड की पुष्टि नहीं की, इसलिए अपलोड स्पीड नहीं मापी गई।</string>
+    <string name="test_error_nothing_sent">%1$s को कुछ भी नहीं भेजा जा सका।</string>
+    <string name="test_error_network_changed">टेस्ट के बीच नेटवर्क बदलकर %1$s हो गया — परिणाम दो कनेक्शनों का मिश्रण होता, इसलिए टेस्ट रोक दिया गया।</string>
+    <string name="test_error_generic">कुछ गड़बड़ हुई: %1$s</string>
+    <string name="test_error_unknown">टेस्ट किसी अज्ञात कारण से विफल हुआ।</string>
+    <string name="test_footnote">सिर्फ़ तभी चलता है जब आप बटन दबाते हैं। टेस्ट केवल एक सार्वजनिक माप सर्वर (डिफ़ॉल्ट %1$s) से बात करता है और किसी से नहीं — न खाता, न एनालिटिक्स। मोबाइल डेटा पर यह पहले पूछता है, क्योंकि टेस्ट सचमुच आपका कुछ डेटा खर्च करता है।</string>
+    <string name="test_history_title">टेस्ट इतिहास</string>
+    <string name="a11y_clear_test_history">टेस्ट इतिहास साफ़ करें</string>
+    <string name="test_confirm_title">लगभग %1$d MB खर्च करें?</string>
+    <string name="test_confirm_body">आप %1$s पर हैं और टेस्ट असली लाइन स्पीड मापता है, इसलिए यह लगभग %2$d MB ट्रांसफ़र करेगा (%3$d से. डाउनलोड + %4$d से. अपलोड, आपके कनेक्शन की पूरी क्षमता पर)।\n\nछोड़ने पर आपका डेटा सुरक्षित रहता है।</string>
+    <string name="test_confirm_data_saver">इस डिवाइस पर डेटा सेवर चालू है — टेस्ट फिर भी आपके प्लान में गिना जाएगा।</string>
+    <string name="test_confirm_transport_mobile">मोबाइल डेटा</string>
+    <string name="test_confirm_transport_wifi">एक मीटर्ड Wi-Fi नेटवर्क</string>
+    <string name="test_confirm_transport_vpn">मीटर्ड कनेक्शन पर VPN</string>
+    <string name="test_confirm_transport_other">एक मीटर्ड कनेक्शन</string>
+    <string name="gauge_latency">लेटेंसी</string>
+    <string name="gauge_scale">स्केल 0–%1$s Mbps</string>
+    <string name="gauge_ghost_legend">पिछला टेस्ट %1$s</string>
+    <string name="a11y_gauge">स्पीड गेज: %1$s %2$s, %3$s</string>
+    <string name="share_result_text">इंटरनेट स्पीड मीटर — स्पीड टेस्ट परिणाम\n↓ %1$s   ↑ %2$s\nपिंग %3$d ms · जिटर %4$d ms\nसर्वर %5$s\n%6$s</string>
+    <string name="share_result_chooser">स्पीड टेस्ट शेयर करें</string>
+
+    <!-- History -->
+    <string name="history_eyebrow">इतिहास</string>
+    <string name="history_title">उपयोग इतिहास</string>
+    <string name="a11y_export_history">इतिहास CSV में निर्यात करें</string>
+    <string name="a11y_clear_all_history">पूरा इतिहास साफ़ करें</string>
+    <string name="purge_history_title">इतिहास मिटाएँ</string>
+    <string name="purge_history_body">सारा संग्रहीत इतिहास स्थायी रूप से मिट जाएगा। इसे पलटा नहीं जा सकता।</string>
+    <string name="history_empty_title">अभी यहाँ कुछ नहीं</string>
+    <string name="history_empty_body">जैसे-जैसे मीटर मापेगा, आपका असली दैनिक उपयोग यहाँ दिखेगा।</string>
+    <string name="history_this_month">इस महीने</string>
+    <string name="history_this_month_named">इस महीने · %1$s</string>
+    <string name="history_monthly_total">मासिक कुल</string>
+    <string name="delta_vs_last_month_none">पिछले महीने की तुलना में अभी कोई उपयोग नहीं</string>
+    <string name="delta_vs_last_month_same">पिछले महीने जितना</string>
+    <string name="delta_vs_last_month_up">↑ पिछले महीने से %1$d%% ज़्यादा</string>
+    <string name="delta_vs_last_month_down">↓ पिछले महीने से %1$d%% कम</string>
+    <string name="export_subject">इंटरनेट स्पीड मीटर — उपयोग इतिहास (CSV)</string>
+    <string name="export_chooser">उपयोग इतिहास निर्यात करें</string>
+
+    <!-- Settings -->
+    <string name="settings_eyebrow">सिस्टम सेटिंग्स</string>
+    <string name="settings_title">ऐप प्राथमिकताएँ</string>
+    <string name="settings_section_appearance">दिखावट</string>
+    <string name="settings_dark_mode">डार्क मोड</string>
+    <string name="settings_dark_mode_system">सिस्टम के अनुसार</string>
+    <string name="settings_dark_mode_on">हमेशा चालू</string>
+    <string name="settings_dark_mode_off">हमेशा बंद</string>
+    <string name="settings_speed_unit">स्पीड इकाई</string>
+    <string name="settings_speed_unit_bytes_hint">KB/s · MB/s — डिवाइस मीटर शैली</string>
+    <string name="settings_speed_unit_bits_hint">Kbps · Mbps — वह इकाई जो ISP बताते हैं</string>
+    <string name="settings_accent">एक्सेंट रंग</string>
+    <string name="settings_accent_hint">बटनों और चुने हुए नेव पिल का रंग।</string>
+    <string name="a11y_accent">%1$s एक्सेंट</string>
+    <string name="settings_section_alerts">दैनिक मोबाइल डेटा अलर्ट</string>
+    <string name="settings_limit_title">दैनिक मोबाइल डेटा सीमा</string>
+    <string name="settings_limit_hint" formatted="false">50%, 90% और 100% पर स्क्रीन पर स्पष्ट चेतावनी पाएँ। ऐप सिर्फ़ चेतावनी देता है — कभी रोकता नहीं।</string>
+    <string name="settings_limit_placeholder">जैसे 2</string>
+    <string name="settings_save_limit">सीमा सहेजें</string>
+    <string name="settings_limit_saved">सहेजा गया: %1$s %2$s प्रतिदिन</string>
+    <string name="settings_limit_saved_none">कोई दैनिक सीमा नहीं — अलर्ट बंद</string>
+    <string name="settings_section_permissions">सिस्टम अनुमतियाँ</string>
+    <string name="settings_usage_access_active">सटीक सिस्टम काउंटर सक्रिय</string>
+    <string name="settings_usage_access_needed">सटीक दैनिक कुल के लिए ज़रूरी</string>
+    <string name="settings_notifications">सूचनाएँ</string>
+    <string name="settings_notifications_active">स्टेटस-बार टिकर दिख रहा है</string>
+    <string name="settings_notifications_needed">लाइव स्पीड टिकर दिखाता है</string>
+    <string name="settings_permission_active">सक्रिय</string>
+    <string name="settings_section_background">बैकग्राउंड में चलता रखें</string>
+    <string name="settings_autostart_title">ऑटो स्टार्ट और बैटरी</string>
+    <string name="settings_autostart_hint">कुछ ब्रांड बैकग्राउंड ऐप बंद कर देते हैं। मीटर को 24/7 चालू रखने के लिए दोनों की अनुमति दें।</string>
+    <string name="settings_autostart_button">ऑटोस्टार्ट</string>
+    <string name="settings_battery_button">बैटरी</string>
+    <string name="settings_section_data">डेटा प्रबंधन</string>
+    <string name="settings_reset_today_hint">आज के काउंटर शून्य करें।</string>
+    <string name="settings_purge_hint">सारा संग्रहीत इतिहास स्थायी रूप से हटाएँ।</string>
+    <string name="settings_section_server">स्पीड टेस्ट सर्वर</string>
+    <string name="settings_server_title">ऑप्ट-इन टेस्ट कहाँ मापता है</string>
+    <string name="settings_server_hint">कुछ नेटवर्क और कॉर्पोरेट DNS सर्वर किसी एक होस्ट को रोक देते हैं। AUTO पहले %1$s आज़माता है और न पहुँच पाने पर %2$s पर चला जाता है; टेस्ट हमेशा दिखाता है कि आँकड़े किस होस्ट से आए। किसी विकल्प पर टैप करते ही वह सहेज लिया जाता है।</string>
+    <string name="settings_server_saved">सहेजा गया: %1$s</string>
+    <string name="settings_server_saved_auto">सहेजा गया: AUTO · %1$s → %2$s</string>
+    <string name="settings_server_saved_custom">सहेजा गया: कस्टम · %1$s</string>
+    <string name="settings_server_no_url">अभी कोई URL नहीं</string>
+    <string name="settings_server_auto">AUTO</string>
+    <string name="settings_server_auto_hint">Cloudflare, फ़ॉलबैक के रूप में LibreSpeed</string>
+    <string name="settings_server_cloudflare_hint">सिर्फ़ Cloudflare</string>
+    <string name="settings_server_librespeed_hint">सिर्फ़ LibreSpeed सार्वजनिक बैकएंड</string>
+    <string name="settings_server_custom">कस्टम होस्ट</string>
+    <string name="settings_server_custom_hint">आपका अपना Cloudflare- या LibreSpeed-संगत सर्वर</string>
+    <string name="settings_flavour_cloudflare">Cloudflare-शैली</string>
+    <string name="settings_flavour_librespeed">LibreSpeed-शैली</string>
+    <string name="settings_server_custom_invalid">पूरा http(s) URL दर्ज करें — तब तक डिफ़ॉल्ट Cloudflare होस्ट उपयोग होगा।</string>
+    <string name="settings_server_custom_unsaved">अभी सहेजा नहीं — %1$s उपयोग करने के लिए सर्वर सहेजें दबाएँ</string>
+    <string name="settings_server_custom_resolved">सहेजा गया — टेस्ट %1$s से बात करेगा</string>
+    <string name="settings_save_endpoint">सर्वर सहेजें</string>
+    <string name="settings_endpoint_saved">सर्वर सहेजा गया</string>
+    <string name="settings_section_engine">माप इंजन</string>
+    <string name="settings_engine_title">लाइव, सीधे OS काउंटरों से</string>
+    <string name="engine_status_running">चल रहा है</string>
+    <string name="engine_status_paused">चल रहा है (रुका हुआ)</string>
+    <string name="engine_status_stopped">बंद</string>
+    <string name="engine_row_status">स्थिति</string>
+    <string name="engine_row_source">काउंटर स्रोत</string>
+    <string name="engine_row_cadence">रीड अंतराल</string>
+    <string name="engine_row_cadence_value">500 ms · %1$d ms विंडो प्रकाशित</string>
+    <string name="engine_row_samples">इस सत्र के सैंपल</string>
+    <string name="engine_row_window">आख़िरी प्रकाशित विंडो</string>
+    <string name="engine_row_network">नेटवर्क</string>
+    <string name="engine_row_raw">कच्चे काउंटर</string>
+    <string name="engine_interfaces_title">कर्नेल इंटरफ़ेस (/proc/net/dev)</string>
+    <string name="engine_footnote">ये वही कच्चे आँकड़े हैं जिन पर मीटर बना है, ताकि आप हर मान खुद जाँच सकें। यहाँ कुछ भी अनुमानित या नकली नहीं है।</string>
+    <string name="a11y_expand">खोलें</string>
+    <string name="a11y_collapse">समेटें</string>
+    <string name="settings_section_about">ऐप के बारे में</string>
+    <string name="settings_about_version">संस्करण %1$s · रियल-टाइम इंजन</string>
+
+    <!-- Home-screen widget -->
+    <string name="widget_label">आज का उपयोग</string>
+    <string name="widget_description">आज का असली डेटा उपयोग — मोबाइल + Wi-Fi।</string>
+    <string name="tile_label">स्पीड मीटर</string>
+    <string name="tile_subtitle_today">आज %1$s</string>
+    <string name="tile_subtitle_running">माप जारी है</string>
+    <string name="tile_subtitle_paused">मीटर रुका हुआ है</string>
+    <string name="widget_today">आज</string>
+    <string name="widget_breakdown">मोबाइल %1$s · Wi-Fi %2$s</string>
+    <string name="widget_updated">अपडेट %1$s</string>
+    <string name="widget_placeholder">—</string>
+    <string name="a11y_widget_summary">आज का डेटा उपयोग %1$s। इंटरनेट स्पीड मीटर खोलता है।</string>
 </resources>

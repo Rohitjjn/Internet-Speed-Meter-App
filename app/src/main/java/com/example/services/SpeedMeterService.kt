@@ -21,6 +21,7 @@ import android.os.IBinder
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.createBitmap
 import androidx.core.graphics.drawable.IconCompat
 import com.example.MainActivity
 import com.example.R
@@ -32,7 +33,9 @@ import com.example.data.PreferencesManager
 import com.example.data.ResetOffsets
 import com.example.data.TransportBytes
 import com.example.util.BytesFormatter
+import com.example.util.DateFormatter
 import com.example.util.SpeedFormatter
+import com.example.widget.TodayUsageWidget
 import com.example.util.SpeedUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,7 +47,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import java.util.Locale
 
 /** One live network interface as reported by the kernel (diagnostics panel). */
 data class InterfaceStat(val name: String, val kind: InterfaceKind, val rx: Long, val tx: Long)
@@ -90,8 +92,12 @@ class SpeedMeterService : Service() {
     private var tickerJob: Job? = null
     private var accountingJob: Job? = null
 
-    /** The measurement core — pure Kotlin, only touched from the read loop coroutine. */
-    private val engine = SpeedEngine()
+    /**
+     * The measurement core — pure Kotlin, only touched from the read loop coroutine. The
+     * samples are stamped with `elapsedRealtime`, so the same clock is injected for the
+     * session duration (monotonic, keeps counting through deep sleep).
+     */
+    private val engine = SpeedEngine(clock = { SystemClock.elapsedRealtime() })
 
     private lateinit var repository: DataUsageRepository
     private lateinit var preferencesManager: PreferencesManager
@@ -117,6 +123,11 @@ class SpeedMeterService : Service() {
     private var integratedWifiTx = 0L
     private var attributedSnapshot: Map<Transport, TransferBytes> = emptyMap()
 
+    // Last row actually written: an idle phone must not cost a Room transaction every 15 s.
+    private var lastPersistedUsage: DataUsageEntity? = null
+    private var passesSinceUsageWrite = 0
+    private var lastSavedSpeed: Pair<Long, Long>? = null
+
     // ----- status-bar speed icon + notification throttling -----
     private var cachedSpeedIcon: IconCompat? = null
     private var lastSpeedText = ""
@@ -132,15 +143,17 @@ class SpeedMeterService : Service() {
     private val iconBuffers = arrayOfNulls<IconBuffer>(2)
     private var iconBufferIndex = 0
 
-    /** How many `onTimeout` calls happened in a row without a healthy run in between. */
-    @Volatile
-    private var timeoutStreak = 0
-
     private class IconBuffer(val bitmap: Bitmap, val canvas: Canvas, val paint: Paint)
 
     companion object {
+        /** Accounting passes (15 s each) between forced usage writes — ~5 min. */
+        private const val USAGE_FORCE_WRITE_PASSES = 20
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "speed_meter_channel"
+
+        /** "Meter paused" — a separate, dismissible notification on its own quiet channel. */
+        private const val PAUSED_NOTIFICATION_ID = 1002
+        private const val STATUS_CHANNEL_ID = "speed_meter_status"
 
         /** Status-bar glyph canvas size (px). */
         private const val ICON_SIZE = 144
@@ -158,17 +171,6 @@ class SpeedMeterService : Service() {
          */
         private const val READ_INTERVAL_MS = 500L
         private const val ACCOUNTING_PERIOD_MS = 15_000L
-
-        /**
-         * Android 15+ gives a `dataSync` foreground service a daily budget. When it runs
-         * out the OS calls `onTimeout`; restarting *immediately* in a loop only burns the
-         * remaining budget faster, so the restart is delayed and eventually handed over to
-         * the WorkManager watchdog instead.
-         */
-        private const val MAX_INLINE_TIMEOUT_RESTARTS = 2
-        private const val TIMEOUT_RESTART_BACKOFF_MS = 20_000L
-        /** Uptime after which the timeout streak is considered "not a tight loop". */
-        private const val TIMEOUT_STREAK_RESET_MS = 20 * 60_000L
 
         private val _liveSpeedFlow = MutableStateFlow(LiveSpeed())
         val liveSpeedFlow: StateFlow<LiveSpeed> = _liveSpeedFlow.asStateFlow()
@@ -188,14 +190,79 @@ class SpeedMeterService : Service() {
         private val _permissionGrantedFlow = MutableStateFlow(false)
         val permissionGrantedFlow: StateFlow<Boolean> = _permissionGrantedFlow.asStateFlow()
 
-        fun startService(context: Context) {
-            try {
+        /**
+         * Asks the OS to (re)start the meter. Returns `false` when the start was refused:
+         * Android 12+ blocks foreground-service starts from the background unless the user
+         * just interacted with the app, and Android 15+ refuses a `dataSync` start once its
+         * daily budget is spent. Callers that run in the background use [notifyPaused] so
+         * the user learns that nothing is being measured instead of assuming it is.
+         */
+        fun startService(context: Context): Boolean {
+            return try {
                 ContextCompat.startForegroundService(context, Intent(context, SpeedMeterService::class.java))
+                true
             } catch (e: Exception) {
-                // Background start blocked by the OS (Android 14/15+); the WorkManager
-                // watchdog or the next app open will (re)start the service.
+                e.printStackTrace()
+                false
+            }
+        }
+
+        /**
+         * Tells the user the meter is **not** running and why, with a tap that opens the
+         * app — an app in the foreground may always start its own foreground service, so
+         * that tap is the one restart path the OS never refuses. Quiet channel, replaces
+         * itself in place, never shows a number (nothing is measured while paused).
+         */
+        fun notifyPaused(context: Context) {
+            try {
+                val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    nm.createNotificationChannel(
+                        NotificationChannel(
+                            STATUS_CHANNEL_ID,
+                            context.getString(R.string.notification_status_channel_name),
+                            NotificationManager.IMPORTANCE_LOW
+                        ).apply { setShowBadge(false) }
+                    )
+                }
+                val text = context.getString(R.string.notification_paused_text)
+                val notification = NotificationCompat.Builder(context, STATUS_CHANNEL_ID)
+                    .setSmallIcon(R.drawable.ic_network_icon)
+                    .setContentTitle(context.getString(R.string.notification_paused_title))
+                    .setContentText(text)
+                    .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                    .setContentIntent(openAppPendingIntent(context))
+                    .setCategory(NotificationCompat.CATEGORY_STATUS)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setOnlyAlertOnce(true)
+                    .setAutoCancel(true)
+                    .build()
+                nm.notify(PAUSED_NOTIFICATION_ID, notification)
+            } catch (e: Exception) {
+                // No notification permission / disabled channel: nothing else to do.
                 e.printStackTrace()
             }
+        }
+
+        fun clearPausedNotification(context: Context) {
+            try {
+                (context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)
+                    ?.cancel(PAUSED_NOTIFICATION_ID)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        private fun openAppPendingIntent(context: Context): PendingIntent {
+            val intent = Intent(context, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            return PendingIntent.getActivity(
+                context,
+                0,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
         }
 
         fun stopService(context: Context) {
@@ -206,8 +273,8 @@ class SpeedMeterService : Service() {
             }
         }
 
-        fun currentDay(): String =
-            java.text.SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(java.util.Date())
+        /** Today's row key — always `yyyy-MM-dd` in Latin digits (see [DateFormatter.day]). */
+        fun currentDay(): String = DateFormatter.day()
     }
 
     override fun onCreate() {
@@ -232,12 +299,12 @@ class SpeedMeterService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         _isServiceRunning.value = true
-        startForegroundWithNotification()
-        // If the meter then keeps running for a while, the next `onTimeout` is a fresh
-        // budget event (not a restart loop) and may be answered with an inline restart again.
-        serviceScope.launch {
-            delay(TIMEOUT_STREAK_RESET_MS)
-            timeoutStreak = 0
+        if (startForegroundWithNotification()) {
+            clearPausedNotification(this)
+        } else {
+            // `startForeground` itself was refused (API 35+ dataSync budget, or a
+            // background-start rule): the service is stopping — say so.
+            notifyPaused(this)
         }
         return START_STICKY
     }
@@ -246,32 +313,19 @@ class SpeedMeterService : Service() {
 
     /**
      * Android 15+ (API 35): `dataSync` foreground services get a daily budget. When it is
-     * exhausted the system calls this.
-     *
-     * Restarting instantly would spend whatever budget is left in a tight loop if the OS
-     * keeps refusing, so: the first restarts are delayed by [TIMEOUT_RESTART_BACKOFF_MS]
-     * and after [MAX_INLINE_TIMEOUT_RESTARTS] the service stops cleanly and lets the
-     * WorkManager watchdog (a different FGS start path, minutes later) pick it up.
+     * exhausted the system calls this, and the service **must stop within a few seconds**
+     * or the app is reported as not responding. So: persist nothing fancy, hand the restart
+     * to WorkManager (a delayed one-shot with exponential backoff — the budget does not
+     * come back immediately, and an in-process restart from the background would be
+     * refused anyway) and stop right away. The 60-minute watchdog stays scheduled too.
      */
     private fun handleTimeout(startId: Int) {
-        timeoutStreak++
-        if (timeoutStreak > MAX_INLINE_TIMEOUT_RESTARTS) {
-            ServiceScheduler.scheduleRetry(this)
-            stopSelf(startId)
-            return
-        }
-        serviceScope.launch {
-            try {
-                delay(TIMEOUT_RESTART_BACKOFF_MS)
-                ContextCompat.startForegroundService(this@SpeedMeterService, Intent(this@SpeedMeterService, SpeedMeterService::class.java))
-            } catch (e: Exception) {
-                ServiceScheduler.scheduleRetry(this@SpeedMeterService)
-                stopSelf()
-            }
-        }
+        notifyPaused(this)
+        ServiceScheduler.scheduleRetry(this)
+        stopSelf(startId)
     }
 
-    /** API < 35 entry point (deprecated upstream, still called on older platforms). */
+    /** API 34 entry point (`shortService` timeouts); kept so older platforms are covered too. */
     @Deprecated("Use the timeoutType overload on API 35+")
     override fun onTimeout(startId: Int) {
         handleTimeout(startId)
@@ -529,6 +583,9 @@ class SpeedMeterService : Service() {
             }
             attributedSnapshot = engine.attributedTotals()
             _todayUsageFlow.value = buildTodayEntity()
+            // First pass right away: with Usage access the row (and the notification's
+            // "Today" figure) would otherwise show 0 for the first 15 s after a start.
+            accountUsage()
             while (true) {
                 delay(ACCOUNTING_PERIOD_MS)
                 accountUsage()
@@ -606,14 +663,28 @@ class SpeedMeterService : Service() {
         }
 
         try {
-            repository.upsertData(entity)
+            // Write only when the row changed, plus a periodic self-heal write (about every
+            // 5 min) so a row deleted behind the service's back is re-created without traffic.
+            passesSinceUsageWrite++
+            if (entity != lastPersistedUsage || passesSinceUsageWrite >= USAGE_FORCE_WRITE_PASSES) {
+                repository.upsertData(entity)
+                lastPersistedUsage = entity
+                passesSinceUsageWrite = 0
+            }
             _todayUsageFlow.value = entity
-            // Persist the live speed for the next service start (throttled to this loop).
+            // Persist the live speed for the next service start (throttled to this loop,
+            // skipped while unchanged — a DataStore edit rewrites the whole file).
             val live = engine.snapshot()
-            preferencesManager.saveLastSpeed(live.steadyDownloadBps, live.steadyUploadBps)
+            val speedPair = live.steadyDownloadBps to live.steadyUploadBps
+            if (speedPair != lastSavedSpeed) {
+                preferencesManager.saveLastSpeed(speedPair.first, speedPair.second)
+                lastSavedSpeed = speedPair
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }
+        // Home-screen widget: same row, at most once a minute, no-op without a widget.
+        TodayUsageWidget.pushIfPresent(this, entity)
     }
 
     private fun deltaOf(
@@ -661,14 +732,16 @@ class SpeedMeterService : Service() {
         }
     }
 
-    private fun startForegroundWithNotification() {
+    /** Promotes the service; returns `false` (and stops it) when the OS refused. */
+    private fun startForegroundWithNotification(): Boolean {
         val notification = buildSpeedNotification(engine.snapshot())
-        try {
+        return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
+            true
         } catch (e: Exception) {
             e.printStackTrace()
             try {
@@ -676,6 +749,7 @@ class SpeedMeterService : Service() {
             } catch (ex: Exception) {
                 ex.printStackTrace()
             }
+            false
         }
     }
 
@@ -759,17 +833,7 @@ class SpeedMeterService : Service() {
         }
     }
 
-    private fun openAppIntent(): PendingIntent {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        }
-        return PendingIntent.getActivity(
-            this,
-            0,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-    }
+    private fun openAppIntent(): PendingIntent = openAppPendingIntent(this)
 
     /**
      * Custom status-bar icon: the live download speed as text (the signature look
@@ -791,8 +855,6 @@ class SpeedMeterService : Service() {
             val canvas = buffer.canvas
             canvas.drawColor(Color.TRANSPARENT)
             val paint = buffer.paint
-            paint.textAlign = Paint.Align.CENTER
-            paint.typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
 
             // Must stay readable at status-bar size in BOTH display modes (e.g. "842",
             // "12.4", "104.9") without clipping the 144 px icon canvas.
@@ -823,10 +885,12 @@ class SpeedMeterService : Service() {
         iconBufferIndex = (iconBufferIndex + 1) % iconBuffers.size
         val existing = iconBuffers[iconBufferIndex]
         if (existing != null) return existing
-        val bitmap = Bitmap.createBitmap(ICON_SIZE, ICON_SIZE, Bitmap.Config.ARGB_8888)
+        val bitmap = createBitmap(ICON_SIZE, ICON_SIZE)
         val created = IconBuffer(bitmap, Canvas(bitmap), Paint().apply {
             color = Color.WHITE
             isAntiAlias = true
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
         })
         iconBuffers[iconBufferIndex] = created
         return created

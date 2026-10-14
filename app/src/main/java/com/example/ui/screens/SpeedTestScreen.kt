@@ -1,7 +1,9 @@
 package com.example.ui.screens
 
+import android.content.Context
 import android.content.Intent
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -14,6 +16,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -39,6 +42,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -48,8 +52,16 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -61,7 +73,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.R
 import com.example.data.SpeedTestResult
+import com.example.services.SpeedTestEngine
 import com.example.services.SpeedTestServers
+import com.example.services.Transport
 import com.example.ui.components.AppBackground
 import com.example.ui.components.AppIcon
 import com.example.ui.components.GlassCard
@@ -81,23 +95,29 @@ import com.example.ui.util.secondary
 import com.example.ui.viewmodel.SpeedTestPhase
 import com.example.ui.viewmodel.SpeedTestState
 import com.example.ui.viewmodel.SpeedTestViewModel
+import com.example.util.DeltaMath
 import com.example.util.SpeedFormatter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.cos
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToLong
 import kotlin.math.sin
+
+/** Width from which the Test screen lays the gauge and the readouts side by side. */
+private val TwoColumnBreakpoint = 600.dp
 
 /**
  * Active speed test: ping, download and upload are measured for real over the network,
  * which is the only way to know the *capacity* of a connection (the passive meter shows
  * what the device is currently using, which is 0 while idle).
  *
- * The gauge is a real instrument: a labelled value scale, tick marks, and a needle that
- * follows the live measurement — plus a separate thin bar for how far the current phase
- * is through its time budget. Result sharing is a plain text `ACTION_SEND`.
+ * The gauge is a real instrument: a labelled value scale, tick marks, a needle that
+ * follows the live measurement and a dimmer **ghost needle** at the previous run's value
+ * — plus a separate thin bar for how far the current phase is through its time budget.
+ * Result sharing is a plain text `ACTION_SEND`.
  */
 @Composable
 fun SpeedTestScreen(
@@ -105,19 +125,32 @@ fun SpeedTestScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val history by viewModel.history.collectAsState()
-    val context = LocalContext.current
+
+    // One light tick when a *new* result lands (not when the tab is re-entered with an old
+    // one): the same tactile language as the limit warning, no permission involved.
+    val haptics = LocalHapticFeedback.current
+    var lastResultTick by remember { mutableLongStateOf(state.finishedAtMillis) }
+    LaunchedEffect(state.phase, state.finishedAtMillis) {
+        if (state.phase == SpeedTestPhase.DONE && state.finishedAtMillis != lastResultTick) {
+            lastResultTick = state.finishedAtMillis
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
+    }
 
     val isDark = isDarkModeActive()
-    val downColor = if (isDark) SpeedDownDark else SpeedDown
-    val upColor = if (isDark) SpeedUpDark else SpeedUp
-    val liveColor = if (isDark) LiveGreenDark else LiveGreen
+    val palette = GaugePalette(
+        down = if (isDark) SpeedDownDark else SpeedDown,
+        up = if (isDark) SpeedUpDark else SpeedUp,
+        live = if (isDark) LiveGreenDark else LiveGreen
+    )
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .testTag("speed_test_screen_root")
     ) {
         AppBackground()
+        val twoColumn = maxWidth >= TwoColumnBreakpoint
 
         Column(
             modifier = Modifier
@@ -133,7 +166,7 @@ fun SpeedTestScreen(
                     .padding(top = 24.dp, bottom = 14.dp)
             ) {
                 Text(
-                    text = "REAL MEASUREMENT",
+                    text = stringResource(R.string.test_eyebrow),
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.5.sp,
@@ -142,356 +175,489 @@ fun SpeedTestScreen(
                 )
                 Spacer(modifier = Modifier.height(3.dp))
                 Text(
-                    text = "Speed Test",
+                    text = stringResource(R.string.test_title),
                     fontSize = 28.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onBackground
                 )
             }
 
-            // ---------------- Gauge ----------------
-            GlassCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).testTag("speed_test_gauge_card")) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    SpeedGauge(
-                        state = state,
-                        downColor = downColor,
-                        upColor = upColor,
-                        liveColor = liveColor
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    PhaseProgressBar(state = state, accent = gaugeAccent(state, downColor, upColor, liveColor))
-                    Spacer(modifier = Modifier.height(12.dp))
-                    AnimatedContent(
-                        targetState = state.phase,
-                        transitionSpec = {
-                            fadeIn(animationSpec = tween(240)) togetherWith
-                                fadeOut(animationSpec = tween(140))
-                        },
-                        label = "speed_test_phase_crossfade"
-                    ) { phase ->
-                        Text(
-                            text = phaseLabel(phase, state),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp,
-                            fontFamily = FontFamily.Monospace,
-                            color = when (phase) {
-                                SpeedTestPhase.ERROR -> AccentDanger
-                                SpeedTestPhase.DONE -> liveColor
-                                else -> secondary()
-                            },
-                            modifier = Modifier.testTag("speed_test_phase_label")
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = if (state.usedFallback) {
-                            "${state.server} · fallback endpoint"
-                        } else {
-                            state.server
-                        },
-                        fontSize = 9.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = secondary().copy(alpha = 0.75f),
-                        modifier = Modifier.testTag("speed_test_server_label")
-                    )
-                }
-            }
-
-            // ---------------- Metrics ----------------
-            GlassCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 16.dp)) {
+            if (twoColumn) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 16.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    MetricTile(
-                        label = "PING",
-                        bitsPerSecond = null,
-                        latencyMs = state.latencyMs,
-                        unitForLatency = "ms",
-                        tint = AccentWarning,
-                        testTag = "speed_test_ping_value"
-                    )
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .height(44.dp)
-                            .background(glassBorder)
-                    )
-                    MetricTile(
-                        label = "DOWNLOAD",
-                        bitsPerSecond = state.downloadBitsPerSecond,
-                        latencyMs = null,
-                        unitForLatency = "Mbps",
-                        tint = downColor,
-                        testTag = "speed_test_download_value"
-                    )
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .height(44.dp)
-                            .background(glassBorder)
-                    )
-                    MetricTile(
-                        label = "UPLOAD",
-                        bitsPerSecond = state.uploadBitsPerSecond,
-                        latencyMs = null,
-                        unitForLatency = "Mbps",
-                        tint = upColor,
-                        testTag = "speed_test_upload_value"
-                    )
-                }
-            }
-
-            // ---------------- Result detail + share ----------------
-            if (state.phase == SpeedTestPhase.DONE) {
-                GlassCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 16.dp)) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "LATEST RESULT",
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = secondary()
-                            )
-                            Text(
-                                text = "SHARE",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(glassColor)
-                                    .border(1.dp, glassBorder, RoundedCornerShape(8.dp))
-                                    .padding(horizontal = 10.dp, vertical = 5.dp)
-                                    .testTag("speed_test_share_button")
-                                    .clickable { shareResult(context, state) }
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(10.dp))
-                        ResultRow("Server", state.server)
-                        ResultRow("Jitter", state.jitterMs?.let { "$it ms" } ?: "—")
-                        ResultRow(
-                            "Download",
-                            state.downloadBitsPerSecond?.let { SpeedFormatter.formatBits(it) } ?: "—"
-                        )
-                        ResultRow(
-                            "Upload",
-                            state.uploadBitsPerSecond?.let { SpeedFormatter.formatBits(it) } ?: "—"
-                        )
-                        ResultRow("Completed", formatTimestamp(state.finishedAtMillis))
-                        if (state.usedFallback) {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "The default endpoint did not answer, so this result comes " +
-                                    "from the fallback host.",
-                                fontSize = 10.sp,
-                                color = secondary().copy(alpha = 0.85f)
-                            )
-                        }
+                    Column(modifier = Modifier.weight(1f)) {
+                        GaugeCard(state = state, palette = palette)
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        MetricsCard(state = state, palette = palette)
+                        ResultOrErrorCard(state = state, palette = palette, topPadding = 16.dp)
+                        ActionButton(state = state, viewModel = viewModel, topPadding = 16.dp)
+                        FootNote()
                     }
                 }
-            }
-
-            if (state.phase == SpeedTestPhase.ERROR) {
-                GlassCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 16.dp)) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        AppIcon(
-                            resId = R.drawable.ic_warning,
-                            contentDescription = null,
-                            tint = AccentDanger,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Column {
-                            Text(
-                                text = if (state.aborted) {
-                                    "Test stopped"
-                                } else {
-                                    "Could not finish the test"
-                                },
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
-                            Text(
-                                text = state.error ?: "Check your connection and try again.",
-                                fontSize = 11.sp,
-                                color = secondary()
-                            )
-                        }
-                    }
+            } else {
+                Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                    GaugeCard(state = state, palette = palette)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    MetricsCard(state = state, palette = palette)
+                    ResultOrErrorCard(state = state, palette = palette, topPadding = 16.dp)
+                    ActionButton(state = state, viewModel = viewModel, topPadding = 16.dp)
+                    FootNote()
                 }
             }
-
-            // ---------------- Action button ----------------
-            Button(
-                onClick = {
-                    if (state.isRunning) viewModel.cancelTest() else viewModel.requestTest()
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp)
-                    .padding(top = 16.dp)
-                    .height(52.dp)
-                    .testTag("speed_test_start_button"),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                ),
-                shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 18.dp)
-            ) {
-                AppIcon(
-                    resId = R.drawable.ic_bolt,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = when {
-                        state.isRunning -> "STOP TEST"
-                        state.phase == SpeedTestPhase.DONE || state.phase == SpeedTestPhase.ERROR -> "TEST AGAIN"
-                        else -> "START TEST"
-                    },
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            Text(
-                text = "Runs only when you tap the button. The test talks to one public " +
-                    "measurement endpoint (${SpeedTestServers.CLOUDFLARE.host} by default) and " +
-                    "nothing else — no account, no analytics. On mobile data it asks first, " +
-                    "because a test really does use some of your data.",
-                fontSize = 10.sp,
-                color = secondary().copy(alpha = 0.8f),
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp)
-            )
 
             // ---------------- History ----------------
             if (history.isNotEmpty()) {
-                Row(
+                HistorySection(history = history, onClear = { viewModel.clearHistory() })
+            }
+        }
+    }
+
+    // ---------------- Metered-data confirmation ----------------
+    state.pendingConfirmationMb?.let { estimateMb ->
+        MeteredConfirmationDialog(
+            estimateMb = estimateMb,
+            transport = state.pendingConfirmationTransport,
+            dataSaverOn = state.pendingConfirmationDataSaver,
+            onConfirm = { viewModel.confirmStart() },
+            onDismiss = { viewModel.dismissConfirmation() }
+        )
+    }
+}
+
+/** The three colours the gauge, bars and tiles share. */
+private class GaugePalette(val down: Color, val up: Color, val live: Color)
+
+// ============================== CARDS ==============================
+
+@Composable
+private fun GaugeCard(state: SpeedTestState, palette: GaugePalette) {
+    GlassCard(modifier = Modifier.fillMaxWidth().testTag("speed_test_gauge_card")) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            SpeedGauge(state = state, palette = palette)
+            Spacer(modifier = Modifier.height(10.dp))
+            PhaseProgressBar(state = state, accent = gaugeAccent(state, palette))
+            Spacer(modifier = Modifier.height(12.dp))
+            AnimatedContent(
+                targetState = state.phase,
+                transitionSpec = {
+                    fadeIn(animationSpec = tween(240)) togetherWith
+                        fadeOut(animationSpec = tween(140))
+                },
+                label = "speed_test_phase_crossfade"
+            ) { phase ->
+                Text(
+                    text = phaseLabel(phase, state),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = when (phase) {
+                        SpeedTestPhase.ERROR -> AccentDanger
+                        SpeedTestPhase.DONE -> palette.live
+                        else -> secondary()
+                    },
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp)
-                        .padding(top = 6.dp, bottom = 8.dp),
+                        .testTag("speed_test_phase_label")
+                        // Phases change a handful of times per run: a polite live region
+                        // tells a screen-reader user where the test is without spamming.
+                        .semantics { liveRegion = LiveRegionMode.Polite }
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = if (state.usedFallback) {
+                    stringResource(R.string.test_server_fallback, state.server)
+                } else {
+                    state.server
+                },
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+                color = secondary().copy(alpha = 0.75f),
+                modifier = Modifier.testTag("speed_test_server_label")
+            )
+        }
+    }
+}
+
+@Composable
+private fun MetricsCard(state: SpeedTestState, palette: GaugePalette) {
+    GlassCard(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 16.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            MetricTile(
+                label = stringResource(R.string.label_ping),
+                bitsPerSecond = null,
+                latencyMs = state.latencyMs,
+                unitForLatency = stringResource(R.string.unit_ms),
+                isLatency = true,
+                tint = AccentWarning,
+                testTag = "speed_test_ping_value"
+            )
+            MetricDivider()
+            MetricTile(
+                label = stringResource(R.string.label_download),
+                bitsPerSecond = state.downloadBitsPerSecond,
+                latencyMs = null,
+                unitForLatency = "",
+                isLatency = false,
+                tint = palette.down,
+                testTag = "speed_test_download_value"
+            )
+            MetricDivider()
+            MetricTile(
+                label = stringResource(R.string.label_upload),
+                bitsPerSecond = state.uploadBitsPerSecond,
+                latencyMs = null,
+                unitForLatency = "",
+                isLatency = false,
+                tint = palette.up,
+                testTag = "speed_test_upload_value"
+            )
+        }
+    }
+}
+
+@Composable
+private fun MetricDivider() {
+    Box(
+        modifier = Modifier
+            .width(1.dp)
+            .height(44.dp)
+            .background(glassBorder)
+    )
+}
+
+@Composable
+private fun ResultOrErrorCard(state: SpeedTestState, palette: GaugePalette, topPadding: androidx.compose.ui.unit.Dp) {
+    val context = LocalContext.current
+    if (state.phase == SpeedTestPhase.DONE) {
+        GlassCard(modifier = Modifier.fillMaxWidth().padding(top = topPadding)) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "TEST HISTORY",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.5.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = secondary()
-                    )
-                    Text(
-                        text = "CLEAR",
+                        text = stringResource(R.string.test_latest_result),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.sp,
                         fontFamily = FontFamily.Monospace,
-                        color = AccentDanger,
+                        color = secondary()
+                    )
+                    val shareLabel = stringResource(R.string.a11y_share_result)
+                    Text(
+                        text = stringResource(R.string.action_share),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
                             .background(glassColor)
                             .border(1.dp, glassBorder, RoundedCornerShape(8.dp))
+                            .clickable(onClickLabel = shareLabel, role = Role.Button) { shareResult(context, state) }
                             .padding(horizontal = 10.dp, vertical = 5.dp)
-                            .testTag("speed_test_clear_history")
-                            .clickable { viewModel.clearHistory() }
+                            .testTag("speed_test_share_button")
                     )
                 }
-                GlassCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        history.forEachIndexed { index, result ->
-                            if (index > 0) {
-                                Spacer(modifier = Modifier.height(10.dp))
-                                HorizontalDivider(color = glassBorder.copy(alpha = 0.5f))
-                                Spacer(modifier = Modifier.height(10.dp))
-                            }
-                            HistoryRow(result)
-                        }
+
+                // "vs last test": computed from the two real results, shown only when a
+                // previous run exists.
+                val previous = state.previousResult
+                val current = state.downloadBitsPerSecond
+                if (previous != null && current != null) {
+                    val delta = DeltaMath.percentChange(current, previous.downloadBps * 8.0)
+                    if (delta != null) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        ComparisonChip(delta = delta, palette = palette)
                     }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                ResultRow(stringResource(R.string.result_server), state.server)
+                ResultRow(
+                    stringResource(R.string.result_jitter),
+                    state.jitterMs?.let { "$it ${stringResource(R.string.unit_ms)}" } ?: "—"
+                )
+                ResultRow(
+                    stringResource(R.string.result_download),
+                    state.downloadBitsPerSecond?.let { SpeedFormatter.formatBits(it) } ?: "—"
+                )
+                ResultRow(
+                    stringResource(R.string.result_upload),
+                    state.uploadBitsPerSecond?.let { SpeedFormatter.formatBits(it) } ?: "—"
+                )
+                if (state.uploadAckCode > 0) {
+                    ResultRow(
+                        stringResource(R.string.result_upload_check),
+                        stringResource(R.string.result_upload_check_value, state.uploadAckCode)
+                    )
+                }
+                ResultRow(stringResource(R.string.result_completed), formatTimestamp(state.finishedAtMillis))
+                if (state.usedFallback) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = stringResource(R.string.test_fallback_note),
+                        fontSize = 10.sp,
+                        color = secondary().copy(alpha = 0.85f)
+                    )
                 }
             }
         }
     }
 
-    // ---------------- Mobile-data confirmation ----------------
-    state.pendingConfirmationMb?.let { estimateMb ->
-        AlertDialog(
-            onDismissRequest = { viewModel.dismissConfirmation() },
-            title = { Text("Use about $estimateMb MB?", fontWeight = FontWeight.Bold) },
-            text = {
-                Text(
-                    "You are on mobile data and the test measures the real line speed, so it " +
-                        "transfers roughly $estimateMb MB (8 s download + 6 s upload at whatever " +
-                        "your connection can do).\n\nSkipping keeps your data untouched.",
-                    color = secondary()
+    if (state.phase == SpeedTestPhase.ERROR) {
+        GlassCard(modifier = Modifier.fillMaxWidth().padding(top = topPadding)) {
+            Row(
+                modifier = Modifier
+                    .padding(16.dp)
+                    .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                AppIcon(
+                    resId = R.drawable.ic_warning,
+                    contentDescription = null,
+                    tint = AccentDanger,
+                    modifier = Modifier.size(16.dp)
                 )
-            },
-            confirmButton = {
-                TextButton(onClick = { viewModel.confirmStart() }) {
-                    Text("RUN TEST", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Column {
+                    Text(
+                        text = if (state.aborted) {
+                            stringResource(R.string.test_stopped)
+                        } else {
+                            stringResource(R.string.test_error_title_failed)
+                        },
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = state.error ?: stringResource(R.string.test_error_hint),
+                        fontSize = 11.sp,
+                        color = secondary()
+                    )
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.dismissConfirmation() }) {
-                    Text("CANCEL", color = secondary())
-                }
-            },
-            shape = RoundedCornerShape(24.dp),
-            containerColor = MaterialTheme.colorScheme.surface
+            }
+        }
+    }
+}
+
+/** "↑ 12 % vs last test" — a real comparison of two real runs. */
+@Composable
+private fun ComparisonChip(delta: Int, palette: GaugePalette) {
+    val label = when {
+        delta > 0 -> stringResource(R.string.delta_vs_last_test_up, delta)
+        delta < 0 -> stringResource(R.string.delta_vs_last_test_down, -delta)
+        else -> stringResource(R.string.delta_vs_last_test_same)
+    }
+    val tint = when {
+        delta > 0 -> palette.live
+        delta < 0 -> AccentWarning
+        else -> secondary()
+    }
+    GlassChip(modifier = Modifier.testTag("speed_test_delta_chip")) {
+        Text(
+            text = label,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace,
+            color = tint,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
         )
     }
+}
+
+@Composable
+private fun ActionButton(state: SpeedTestState, viewModel: SpeedTestViewModel, topPadding: androidx.compose.ui.unit.Dp) {
+    Button(
+        onClick = {
+            if (state.isRunning) viewModel.cancelTest() else viewModel.requestTest()
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = topPadding)
+            .height(52.dp)
+            .testTag("speed_test_start_button"),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary
+        ),
+        shape = RoundedCornerShape(16.dp),
+        contentPadding = PaddingValues(horizontal = 18.dp)
+    ) {
+        AppIcon(
+            resId = R.drawable.ic_bolt,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = when {
+                state.isRunning -> stringResource(R.string.action_stop_test)
+                state.phase == SpeedTestPhase.DONE || state.phase == SpeedTestPhase.ERROR ->
+                    stringResource(R.string.action_test_again)
+                else -> stringResource(R.string.action_start_test)
+            },
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+private fun FootNote() {
+    Text(
+        text = stringResource(R.string.test_footnote, SpeedTestServers.CLOUDFLARE.host),
+        fontSize = 10.sp,
+        color = secondary().copy(alpha = 0.8f),
+        modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp)
+    )
+}
+
+@Composable
+private fun HistorySection(history: List<SpeedTestResult>, onClear: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .padding(top = 6.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = stringResource(R.string.test_history_title),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.5.sp,
+            fontFamily = FontFamily.Monospace,
+            color = secondary()
+        )
+        val clearLabel = stringResource(R.string.a11y_clear_test_history)
+        Text(
+            text = stringResource(R.string.action_clear),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.sp,
+            fontFamily = FontFamily.Monospace,
+            color = AccentDanger,
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(glassColor)
+                .border(1.dp, glassBorder, RoundedCornerShape(8.dp))
+                .clickable(onClickLabel = clearLabel, role = Role.Button) { onClear() }
+                .padding(horizontal = 10.dp, vertical = 5.dp)
+                .testTag("speed_test_clear_history")
+        )
+    }
+    GlassCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            history.forEachIndexed { index, result ->
+                if (index > 0) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(color = glassBorder.copy(alpha = 0.5f))
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+                HistoryRow(result)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MeteredConfirmationDialog(
+    estimateMb: Int,
+    transport: Transport,
+    dataSaverOn: Boolean,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val transportName = when (transport) {
+        Transport.MOBILE -> stringResource(R.string.test_confirm_transport_mobile)
+        Transport.WIFI -> stringResource(R.string.test_confirm_transport_wifi)
+        Transport.VPN -> stringResource(R.string.test_confirm_transport_vpn)
+        else -> stringResource(R.string.test_confirm_transport_other)
+    }
+    val body = buildString {
+        append(
+            stringResource(
+                R.string.test_confirm_body,
+                transportName,
+                estimateMb,
+                (SpeedTestEngine.DEFAULT_DOWNLOAD_MS / 1000L).toInt(),
+                (SpeedTestEngine.DEFAULT_UPLOAD_MS / 1000L).toInt()
+            )
+        )
+        if (dataSaverOn) {
+            append("\n\n")
+            append(stringResource(R.string.test_confirm_data_saver))
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.test_confirm_title, estimateMb), fontWeight = FontWeight.Bold) },
+        text = { Text(body, color = secondary()) },
+        confirmButton = {
+            TextButton(onClick = onConfirm, modifier = Modifier.testTag("speed_test_confirm_run")) {
+                Text(
+                    stringResource(R.string.action_run_test),
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, modifier = Modifier.testTag("speed_test_confirm_cancel")) {
+                Text(stringResource(R.string.action_cancel), color = secondary())
+            }
+        },
+        shape = RoundedCornerShape(24.dp),
+        containerColor = MaterialTheme.colorScheme.surface
+    )
 }
 
 // ============================== GAUGE ==============================
 
 /** Accent used by the gauge/needle for the current phase. */
-@Composable
-private fun gaugeAccent(
-    state: SpeedTestState,
-    downColor: Color,
-    upColor: Color,
-    liveColor: Color
-): Color = when (state.phase) {
+private fun gaugeAccent(state: SpeedTestState, palette: GaugePalette): Color = when (state.phase) {
     SpeedTestPhase.PING -> AccentWarning
-    SpeedTestPhase.UPLOAD -> upColor
-    SpeedTestPhase.DONE -> liveColor
+    SpeedTestPhase.UPLOAD -> palette.up
+    SpeedTestPhase.DONE -> palette.live
     SpeedTestPhase.ERROR -> AccentDanger
-    else -> downColor
+    else -> palette.down
 }
 
+@Composable
 private fun phaseLabel(phase: SpeedTestPhase, state: SpeedTestState): String = when (phase) {
-    SpeedTestPhase.IDLE -> "READY — TAP START"
-    SpeedTestPhase.PING -> "PINGING ${state.server.uppercase(Locale.ROOT)}"
-    SpeedTestPhase.DOWNLOAD -> "MEASURING DOWNLOAD…"
-    SpeedTestPhase.UPLOAD -> "MEASURING UPLOAD…"
-    SpeedTestPhase.DONE -> "TEST COMPLETE"
-    SpeedTestPhase.ERROR -> if (state.aborted) "TEST STOPPED" else "TEST FAILED"
+    SpeedTestPhase.IDLE -> stringResource(R.string.test_phase_idle)
+    SpeedTestPhase.PING -> stringResource(R.string.test_phase_ping, state.server.uppercase(Locale.ROOT))
+    SpeedTestPhase.DOWNLOAD -> stringResource(R.string.test_phase_download)
+    SpeedTestPhase.UPLOAD -> stringResource(R.string.test_phase_upload)
+    SpeedTestPhase.DONE -> stringResource(R.string.test_phase_done)
+    SpeedTestPhase.ERROR -> if (state.aborted) {
+        stringResource(R.string.test_phase_stopped)
+    } else {
+        stringResource(R.string.test_phase_failed)
+    }
 }
 
 /** How far the current phase (8 s download / 6 s upload) is through its time budget. */
@@ -526,17 +692,13 @@ private fun PhaseProgressBar(state: SpeedTestState, accent: Color) {
 /**
  * Instrument-style gauge: labelled value scale, major/minor tick marks and a needle that
  * sweeps to the live measurement. The scale ceiling is chosen from what this run has
- * actually observed (never from a made-up "max"), so a 30 Mbit/s line and a 600 Mbit/s
- * line both get a readable dial.
+ * actually observed — and from the previous result, so its ghost needle always fits on
+ * the dial — never from a made-up "max", so a 30 Mbit/s line and a 600 Mbit/s line both
+ * get a readable dial.
  */
 @Composable
-private fun SpeedGauge(
-    state: SpeedTestState,
-    downColor: Color,
-    upColor: Color,
-    liveColor: Color
-) {
-    val accent = gaugeAccent(state, downColor, upColor, liveColor)
+private fun SpeedGauge(state: SpeedTestState, palette: GaugePalette) {
+    val accent = gaugeAccent(state, palette)
 
     // Highest real value seen during this run — the dial's ceiling is derived from it.
     var observedMaxMbps by remember(state.startedAtMillis) { mutableFloatStateOf(0f) }
@@ -544,7 +706,8 @@ private fun SpeedGauge(
     LaunchedEffect(currentMbps) {
         if (currentMbps > observedMaxMbps) observedMaxMbps = currentMbps
     }
-    val ceilingMbps = niceCeilingMbps(observedMaxMbps)
+    val ghostMbps = state.ghostBitsPerSecond?.let { (it / 1_000_000.0).toFloat() }
+    val ceilingMbps = niceCeilingMbps(max(observedMaxMbps, ghostMbps ?: 0f))
 
     val targetFraction = if (state.phase == SpeedTestPhase.PING || state.phase == SpeedTestPhase.IDLE) {
         0f
@@ -556,22 +719,41 @@ private fun SpeedGauge(
         animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
         label = "speed_test_needle"
     )
+    val showGhost = ghostMbps != null && state.phase != SpeedTestPhase.PING
+    val ghostFraction by animateFloatAsState(
+        targetValue = if (showGhost) ((ghostMbps ?: 0f) / ceilingMbps).coerceIn(0f, 1f) else 0f,
+        animationSpec = tween(durationMillis = 700, easing = FastOutSlowInEasing),
+        label = "speed_test_ghost_needle"
+    )
 
     val trackColor = glassBorder.copy(alpha = 0.65f)
     val tickColor = secondary().copy(alpha = 0.55f)
     val tickMajorColor = secondary().copy(alpha = 0.85f)
+    val ghostColor = secondary().copy(alpha = 0.45f)
     val measurer = rememberTextMeasurer()
     val labelStyle = TextStyle(
-        fontSize = 9.sp,
+        fontSize = 10.sp,
         fontFamily = FontFamily.Monospace,
         color = secondary()
     )
 
-    val (number, unit) = if (state.phase == SpeedTestPhase.PING && state.latencyMs != null) {
-        state.latencyMs.toString() to "ms"
+    val latency = state.latencyMs
+    val (number, unit) = if (state.phase == SpeedTestPhase.PING && latency != null) {
+        latency.toString() to stringResource(R.string.unit_ms)
     } else {
         SpeedFormatter.splitBits(state.gaugeBitsPerSecond)
     }
+    val scaleText = if (state.phase == SpeedTestPhase.PING) {
+        stringResource(R.string.gauge_latency)
+    } else {
+        stringResource(R.string.gauge_scale, ceilingLabel(ceilingMbps))
+    }
+    val gaugeDescription = stringResource(
+        R.string.a11y_gauge,
+        number,
+        unit,
+        phaseLabel(state.phase, state)
+    )
 
     Box(modifier = Modifier.size(232.dp), contentAlignment = Alignment.Center) {
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -638,6 +820,26 @@ private fun SpeedGauge(
                 )
             }
 
+            // Ghost needle: where the previous run landed (same metric as the live needle).
+            if (showGhost) {
+                val ghostAngle = Math.toRadians((startAngle + sweep * ghostFraction).toDouble())
+                val ghostLength = radius * 0.66f
+                val ghostStart = radius * 0.22f
+                drawLine(
+                    color = ghostColor,
+                    start = Offset(
+                        center.x + ghostStart * cos(ghostAngle).toFloat(),
+                        center.y + ghostStart * sin(ghostAngle).toFloat()
+                    ),
+                    end = Offset(
+                        center.x + ghostLength * cos(ghostAngle).toFloat(),
+                        center.y + ghostLength * sin(ghostAngle).toFloat()
+                    ),
+                    strokeWidth = 1.5.dp.toPx(),
+                    cap = StrokeCap.Round
+                )
+            }
+
             // Needle
             val needleAngle = Math.toRadians((startAngle + sweep * needleFraction).toDouble())
             val needleLength = radius * 0.74f
@@ -665,7 +867,10 @@ private fun SpeedGauge(
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.testTag("speed_test_gauge_number")
+                modifier = Modifier
+                    .testTag("speed_test_gauge_number")
+                    // The dial itself is decoration; the reading carries the description.
+                    .semantics { contentDescription = gaugeDescription }
             )
             Text(
                 text = unit,
@@ -676,12 +881,27 @@ private fun SpeedGauge(
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = if (state.phase == SpeedTestPhase.PING) "LATENCY" else "SCALE 0–${ceilingLabel(ceilingMbps)} Mbps",
-                fontSize = 8.sp,
+                text = scaleText,
+                fontSize = 10.sp,
                 fontFamily = FontFamily.Monospace,
                 letterSpacing = 0.5.sp,
                 color = secondary().copy(alpha = 0.7f)
             )
+            AnimatedVisibility(visible = showGhost) {
+                Text(
+                    text = stringResource(
+                        R.string.gauge_ghost_legend,
+                        SpeedFormatter.formatBits(state.ghostBitsPerSecond ?: 0.0)
+                    ),
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 0.5.sp,
+                    color = ghostColor,
+                    modifier = Modifier
+                        .padding(top = 2.dp)
+                        .testTag("speed_test_ghost_legend")
+                )
+            }
         }
     }
 }
@@ -692,8 +912,10 @@ private fun SpeedGauge(
  */
 internal fun niceCeilingMbps(observedMbps: Float): Float {
     val candidates = floatArrayOf(10f, 25f, 50f, 100f, 250f, 500f, 1000f, 2500f)
-    val target = (observedMbps * 1.15f).coerceAtLeast(10f)
-    // Powers-of-ten rounding keeps the label digits short (10/25/50/100/250/500/1000).
+    // The smallest calibrated step that holds the observed maximum (10 Mbps floor). No
+    // extra headroom factor: 95 Mbps on a 100 dial reads as "fast", on a 250 dial as
+    // "weak" — and the dial re-scales the moment a reading exceeds the step anyway.
+    val target = observedMbps.coerceAtLeast(10f)
     return candidates.firstOrNull { it >= target } ?: candidates.last()
 }
 
@@ -703,24 +925,26 @@ private fun ceilingLabel(ceilingMbps: Float): String = ceilingMbps.roundToLong()
 // ============================== SHARING ==============================
 
 /** Plain `ACTION_SEND` text — no SDK, no image, no account. */
-private fun shareResult(context: android.content.Context, state: SpeedTestState) {
+private fun shareResult(context: Context, state: SpeedTestState) {
     val download = state.downloadBitsPerSecond ?: 0.0
     val upload = state.uploadBitsPerSecond ?: 0.0
     val ping = state.latencyMs ?: 0L
     val jitter = state.jitterMs ?: 0L
-    val text = buildString {
-        append("Internet Speed Meter — speed test result\n")
-        append("↓ ${SpeedFormatter.formatBits(download)}   ↑ ${SpeedFormatter.formatBits(upload)}\n")
-        append("Ping $ping ms · Jitter $jitter ms\n")
-        append("Server ${state.server}\n")
-        append("${formatTimestamp(state.finishedAtMillis)}")
-    }
+    val text = context.getString(
+        R.string.share_result_text,
+        SpeedFormatter.formatBits(download),
+        SpeedFormatter.formatBits(upload),
+        ping,
+        jitter,
+        state.server,
+        formatTimestamp(state.finishedAtMillis)
+    )
     try {
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, text)
         }
-        context.startActivity(Intent.createChooser(intent, "Share speed test"))
+        context.startActivity(Intent.createChooser(intent, context.getString(R.string.share_result_chooser)))
     } catch (e: Exception) {
         // A missing share target must never crash the test screen.
         e.printStackTrace()
@@ -739,6 +963,7 @@ private fun MetricTile(
     bitsPerSecond: Double?,
     latencyMs: Long?,
     unitForLatency: String,
+    isLatency: Boolean,
     tint: Color,
     testTag: String
 ) {
@@ -755,7 +980,7 @@ private fun MetricTile(
 
     val value: String
     val unit: String
-    if (latencyMs != null || unitForLatency == "ms") {
+    if (isLatency) {
         value = if (latencyMs == null) "—" else animatedLatency.roundToLong().toString()
         unit = unitForLatency
     } else {
@@ -764,10 +989,11 @@ private fun MetricTile(
         unit = split.second
     }
 
+    val valueDescription = "$label $value $unit"
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             text = label,
-            fontSize = 9.sp,
+            fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = 1.sp,
             fontFamily = FontFamily.Monospace,
@@ -781,7 +1007,9 @@ private fun MetricTile(
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.testTag(testTag)
+                modifier = Modifier
+                    .testTag(testTag)
+                    .semantics { contentDescription = valueDescription }
             )
             Spacer(modifier = Modifier.width(3.dp))
             Text(
@@ -820,7 +1048,7 @@ private fun HistoryRow(result: SpeedTestResult) {
     val downColor = if (isDark) SpeedDownDark else SpeedDown
     val upColor = if (isDark) SpeedUpDark else SpeedUp
 
-    Column {
+    Column(modifier = Modifier.semantics(mergeDescendants = true) {}) {
         Text(
             text = formatTimestamp(result.atMillis),
             fontSize = 10.sp,
@@ -840,7 +1068,7 @@ private fun HistoryRow(result: SpeedTestResult) {
                 ) {
                     AppIcon(
                         resId = R.drawable.ic_arrow_down,
-                        contentDescription = null,
+                        contentDescription = stringResource(R.string.label_download),
                         tint = downColor,
                         modifier = Modifier.size(11.dp)
                     )
@@ -861,7 +1089,7 @@ private fun HistoryRow(result: SpeedTestResult) {
                 ) {
                     AppIcon(
                         resId = R.drawable.ic_arrow_up,
-                        contentDescription = null,
+                        contentDescription = stringResource(R.string.label_upload),
                         tint = upColor,
                         modifier = Modifier.size(11.dp)
                     )
@@ -875,7 +1103,7 @@ private fun HistoryRow(result: SpeedTestResult) {
                 }
             }
             Text(
-                text = "${result.latencyMs} ms",
+                text = "${result.latencyMs} ${stringResource(R.string.unit_ms)}",
                 fontSize = 10.sp,
                 fontFamily = FontFamily.Monospace,
                 color = secondary()

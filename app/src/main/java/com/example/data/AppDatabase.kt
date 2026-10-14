@@ -21,7 +21,10 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "speed_data_tracker_db"
                 )
-                .fallbackToDestructiveMigration()
+                // History is a cache of OS counters, not user-authored data: on a schema
+                // change it is cheaper to rebuild than to migrate. Room 2.7 asks for the
+                // explicit flag (true = drop every table, the pre-2.7 behaviour).
+                .fallbackToDestructiveMigration(dropAllTables = true)
                 .build()
                 INSTANCE = instance
                 instance

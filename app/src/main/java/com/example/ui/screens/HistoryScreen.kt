@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,7 +35,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -53,8 +57,12 @@ import com.example.ui.util.secondary
 import com.example.ui.viewmodel.HistoryViewModel
 import com.example.util.BytesFormatter
 import com.example.util.DateFormatter
+import com.example.util.DeltaMath
+import com.example.util.UsageCsv
 import java.util.Locale
-import kotlin.math.roundToLong
+
+/** Width from which the list and the monthly recap sit side by side. */
+private val HistoryTwoColumnBreakpoint = 600.dp
 
 @Composable
 fun HistoryScreen(
@@ -71,13 +79,15 @@ fun HistoryScreen(
     val todayStr = remember { DateFormatter.day() }
     val isDark = isDarkModeActive()
     val todayAccent = if (isDark) LiveGreenDark else LiveGreen
+    val context = LocalContext.current
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .testTag("history_screen_root")
     ) {
         AppBackground()
+        val twoColumn = maxWidth >= HistoryTwoColumnBreakpoint
 
         Column(modifier = Modifier.fillMaxSize()) {
             // ---------------- Header ----------------
@@ -91,7 +101,7 @@ fun HistoryScreen(
             ) {
                 Column {
                     Text(
-                        text = "HISTORY",
+                        text = stringResource(R.string.history_eyebrow),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.5.sp,
@@ -100,7 +110,7 @@ fun HistoryScreen(
                     )
                     Spacer(modifier = Modifier.height(3.dp))
                     Text(
-                        text = "Usage History",
+                        text = stringResource(R.string.history_title),
                         fontSize = 28.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onBackground
@@ -108,6 +118,24 @@ fun HistoryScreen(
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (historyList.isNotEmpty()) {
+                        IconButton(
+                            onClick = { shareUsageCsv(context, historyList) },
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(glassColor)
+                                .border(1.dp, glassBorder, RoundedCornerShape(10.dp))
+                                .size(38.dp)
+                                .testTag("history_export_csv")
+                        ) {
+                            AppIcon(
+                                resId = R.drawable.ic_share,
+                                contentDescription = stringResource(R.string.a11y_export_history),
+                                tint = MaterialTheme.colorScheme.onBackground,
+                                modifier = Modifier.size(17.dp)
+                            )
+                        }
+                    }
                     IconButton(
                         onClick = { showResetConfirmation = true },
                         modifier = Modifier
@@ -119,7 +147,7 @@ fun HistoryScreen(
                     ) {
                         AppIcon(
                             resId = R.drawable.ic_restore,
-                            contentDescription = "Reset Today",
+                            contentDescription = stringResource(R.string.a11y_reset_today),
                             tint = MaterialTheme.colorScheme.error,
                             modifier = Modifier.size(17.dp)
                         )
@@ -135,7 +163,7 @@ fun HistoryScreen(
                     ) {
                         AppIcon(
                             resId = R.drawable.ic_delete_forever,
-                            contentDescription = "Clear All History",
+                            contentDescription = stringResource(R.string.a11y_clear_all_history),
                             tint = MaterialTheme.colorScheme.onBackground,
                             modifier = Modifier.size(17.dp)
                         )
@@ -146,16 +174,16 @@ fun HistoryScreen(
             if (showResetConfirmation) {
                 AlertDialog(
                     onDismissRequest = { showResetConfirmation = false },
-                    title = { Text("Reset Today's Usage", fontWeight = FontWeight.Bold) },
-                    text = { Text("Today's counters will be set back to zero. This cannot be undone.", color = secondary()) },
+                    title = { Text(stringResource(R.string.reset_today_title), fontWeight = FontWeight.Bold) },
+                    text = { Text(stringResource(R.string.reset_today_body), color = secondary()) },
                     confirmButton = {
                         TextButton(onClick = {
                             viewModel.resetTodayUsage()
                             showResetConfirmation = false
-                        }) { Text("RESET", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
+                        }) { Text(stringResource(R.string.action_reset), color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
                     },
                     dismissButton = {
-                        TextButton(onClick = { showResetConfirmation = false }) { Text("CANCEL", color = secondary()) }
+                        TextButton(onClick = { showResetConfirmation = false }) { Text(stringResource(R.string.action_cancel), color = secondary()) }
                     },
                     shape = RoundedCornerShape(24.dp),
                     containerColor = MaterialTheme.colorScheme.surface
@@ -165,16 +193,16 @@ fun HistoryScreen(
             if (showPurgeConfirmation) {
                 AlertDialog(
                     onDismissRequest = { showPurgeConfirmation = false },
-                    title = { Text("Purge History", fontWeight = FontWeight.Bold) },
-                    text = { Text("All stored history will be permanently deleted. This is irreversible.", color = secondary()) },
+                    title = { Text(stringResource(R.string.purge_history_title), fontWeight = FontWeight.Bold) },
+                    text = { Text(stringResource(R.string.purge_history_body), color = secondary()) },
                     confirmButton = {
                         TextButton(onClick = {
                             viewModel.clearAllHistory()
                             showPurgeConfirmation = false
-                        }) { Text("PURGE ALL", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
+                        }) { Text(stringResource(R.string.action_purge_all), color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
                     },
                     dismissButton = {
-                        TextButton(onClick = { showPurgeConfirmation = false }) { Text("CANCEL", color = secondary()) }
+                        TextButton(onClick = { showPurgeConfirmation = false }) { Text(stringResource(R.string.action_cancel), color = secondary()) }
                     },
                     shape = RoundedCornerShape(24.dp),
                     containerColor = MaterialTheme.colorScheme.surface
@@ -207,16 +235,42 @@ fun HistoryScreen(
                         }
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "Nothing here yet",
+                            text = stringResource(R.string.history_empty_title),
                             fontSize = 15.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onBackground
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Your real daily usage will appear here as the meter tracks it.",
+                            text = stringResource(R.string.history_empty_body),
                             fontSize = 12.sp,
                             color = secondary()
+                        )
+                    }
+                }
+            } else if (twoColumn) {
+                // Wide layouts: the day list on the left, the monthly recap as a side panel.
+                Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    LazyColumn(
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("history_lazy_column"),
+                        contentPadding = PaddingValues(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 100.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(
+                            items = historyList,
+                            key = { it.date }
+                        ) { item ->
+                            HistoryRowItem(item = item, todayStr = todayStr, todayAccent = todayAccent)
+                        }
+                    }
+                    Box(modifier = Modifier.width(320.dp).padding(end = 8.dp)) {
+                        PinnedMonthlySummaryCard(
+                            totalBytes = monthlyTotalBytes,
+                            previousMonthBytes = previousMonthTotalBytes,
+                            monthLabel = monthLabel,
+                            horizontalPadding = 12.dp
                         )
                     }
                 }
@@ -239,12 +293,31 @@ fun HistoryScreen(
             }
 
             // ---------------- Pinned monthly summary ----------------
-            PinnedMonthlySummaryCard(
-                totalBytes = monthlyTotalBytes,
-                previousMonthBytes = previousMonthTotalBytes,
-                monthLabel = monthLabel
-            )
+            if (!twoColumn || historyList.isEmpty()) {
+                PinnedMonthlySummaryCard(
+                    totalBytes = monthlyTotalBytes,
+                    previousMonthBytes = previousMonthTotalBytes,
+                    monthLabel = monthLabel
+                )
+            }
         }
+    }
+}
+
+/** The stored days as CSV, handed to the share sheet as text (no file, no permission). */
+private fun shareUsageCsv(context: android.content.Context, rows: List<DataUsageEntity>) {
+    try {
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(android.content.Intent.EXTRA_SUBJECT, context.getString(R.string.export_subject))
+            putExtra(android.content.Intent.EXTRA_TEXT, UsageCsv.build(rows))
+        }
+        context.startActivity(
+            android.content.Intent.createChooser(intent, context.getString(R.string.export_chooser))
+        )
+    } catch (e: Exception) {
+        // No share target is not an error worth crashing for.
+        e.printStackTrace()
     }
 }
 
@@ -254,7 +327,7 @@ fun HistoryRowItem(
     todayStr: String,
     todayAccent: androidx.compose.ui.graphics.Color
 ) {
-    val dateDisplay = DateFormatter.readable(item.date, todayStr)
+    val dateDisplay = DateFormatter.readable(item.date, todayStr, stringResource(R.string.label_today_word))
     val isToday = item.date == todayStr
 
     GlassCard(modifier = Modifier.fillMaxWidth().testTag("history_item_card_${item.date}")) {
@@ -314,7 +387,7 @@ fun HistoryRowItem(
                 ) {
                     AppIcon(
                         resId = R.drawable.ic_cellular,
-                        contentDescription = "Mobile",
+                        contentDescription = stringResource(R.string.network_mobile),
                         tint = secondary(),
                         modifier = Modifier.size(12.dp)
                     )
@@ -333,7 +406,7 @@ fun HistoryRowItem(
                 ) {
                     AppIcon(
                         resId = R.drawable.ic_wifi,
-                        contentDescription = "Wi-Fi",
+                        contentDescription = stringResource(R.string.network_wifi),
                         tint = secondary(),
                         modifier = Modifier.size(12.dp)
                     )
@@ -360,7 +433,8 @@ fun HistoryRowItem(
 fun PinnedMonthlySummaryCard(
     totalBytes: Long,
     previousMonthBytes: Long = 0L,
-    monthLabel: String = ""
+    monthLabel: String = "",
+    horizontalPadding: androidx.compose.ui.unit.Dp = 20.dp
 ) {
     val isDark = isDarkModeActive()
     val cardColor = if (isDark) Color(0xFFF2F4F8) else Color(0xFF15181D)
@@ -370,7 +444,7 @@ fun PinnedMonthlySummaryCard(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 20.dp, vertical = 14.dp)
+            .padding(horizontal = horizontalPadding, vertical = 14.dp)
             .testTag("pinned_summary_card")
     ) {
         Box(
@@ -394,8 +468,12 @@ fun PinnedMonthlySummaryCard(
             ) {
                 Column {
                     Text(
-                        text = if (monthLabel.isBlank()) "THIS MONTH" else "THIS MONTH · ${monthLabel.uppercase(Locale.getDefault())}",
-                        fontSize = 9.sp,
+                        text = if (monthLabel.isBlank()) {
+                            stringResource(R.string.history_this_month)
+                        } else {
+                            stringResource(R.string.history_this_month_named, monthLabel.uppercase(Locale.getDefault()))
+                        },
+                        fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.2.sp,
@@ -403,7 +481,7 @@ fun PinnedMonthlySummaryCard(
                     )
                     Spacer(modifier = Modifier.height(3.dp))
                     Text(
-                        text = "Monthly Total",
+                        text = stringResource(R.string.history_monthly_total),
                         fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = onCard
@@ -434,16 +512,16 @@ fun PinnedMonthlySummaryCard(
 
 /**
  * "↓ 12% vs last month" / "↑ 30% vs last month" / "same as last month".
- * Percentages are computed from the two real month totals only.
+ * Percentages are computed from the two real month totals only ([DeltaMath]).
  */
+@Composable
 internal fun monthDeltaLabel(current: Long, previous: Long): String {
     if (previous <= 0L) return ""
-    if (current == 0L) return "no usage yet vs last month"
-    val delta = (current - previous).toDouble() / previous.toDouble() * 100.0
-    val percent = kotlin.math.abs(delta).roundToLong()
+    if (current == 0L) return stringResource(R.string.delta_vs_last_month_none)
+    val delta = DeltaMath.percentChange(current.toDouble(), previous.toDouble()) ?: return ""
     return when {
-        percent == 0L -> "same as last month"
-        delta > 0 -> "\u2191 $percent% vs last month"
-        else -> "\u2193 $percent% vs last month"
+        delta == 0 -> stringResource(R.string.delta_vs_last_month_same)
+        delta > 0 -> stringResource(R.string.delta_vs_last_month_up, delta)
+        else -> stringResource(R.string.delta_vs_last_month_down, -delta)
     }
 }

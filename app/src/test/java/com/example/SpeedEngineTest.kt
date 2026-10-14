@@ -273,6 +273,60 @@ class SpeedEngineTest {
         assertEquals(100_000L, next.sessionRxBytes)
     }
 
+    // ------------------------------------------------------------------ clock + bounds
+
+    @Test
+    fun sessionDurationFollowsTheInjectedMonotonicClockAndNeverRunsBackwards() {
+        var now = 0L
+        val engine = SpeedEngine(
+            publishIntervalMs = 1_000L,
+            maxValidWindowMs = 3_000L,
+            smoothing = 0.5,
+            averageWindowMs = 60_000L,
+            historySize = 60,
+            clock = { now }
+        )
+        engine.setTransport(Transport.WIFI)
+        engine.seed(SpeedSample(1_000L, 500L, 0L))
+
+        // Two reads one second apart, but the clock says more time really passed (the OS
+        // froze the process between the reads): the duration is the clock's, not the tick's.
+        engine.onSample(SpeedSample(2_000L, 600L, 500L))
+        now = 90_000L
+        val afterFreeze = engine.onSample(SpeedSample(3_000L, 700L, 1_000L))
+        assertNotNull(afterFreeze)
+        assertEquals(90_000L, afterFreeze!!.sessionDurationMs)
+
+        // A clock that lags behind the sample timestamps can never shrink the duration.
+        now = 1_500L
+        engine.onSample(SpeedSample(4_000L, 800L, 1_500L))
+        val lagging = engine.onSample(SpeedSample(5_000L, 900L, 2_000L))
+        assertNotNull(lagging)
+        assertEquals(2_000L, lagging!!.sessionDurationMs)
+    }
+
+    @Test
+    fun historyAndAverageStayBoundedOverALongRun() {
+        val engine = engine()
+        // 20 minutes at 500 ms cadence = 2 400 reads, 1 200 publishes.
+        val published = run(engine, seconds = 1_200, rxPerSecond = 120_000L, txPerSecond = 30_000L)
+        assertEquals(1_200, published.size)
+        val last = published.last()
+
+        assertEquals("sparkline history is capped", 60, last.downloadHistory.size)
+        assertEquals(60, last.uploadHistory.size)
+        assertTrue(last.downloadHistory.all { it == 120_000L })
+        assertTrue(last.uploadHistory.all { it == 30_000L })
+        // The 60 s average is a true rolling window, not an ever-growing accumulator.
+        assertEquals(120_000L, last.averageDownloadBps)
+        assertEquals(30_000L, last.averageUploadBps)
+        // And the session totals are exact: 1 200 s × rate.
+        assertEquals(1_200L * 120_000L, last.sessionRxBytes)
+        assertEquals(1_200L * 30_000L, last.sessionTxBytes)
+        assertEquals(1_200_000L, last.sessionDurationMs)
+        assertEquals(2_400L, last.samplesTaken)
+    }
+
     @Test
     fun transferBytesArithmeticIsSafe() {
         val a = TransferBytes(1_000L, 500L)

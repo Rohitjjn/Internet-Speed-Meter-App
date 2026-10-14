@@ -13,9 +13,10 @@ class BootCompletedReceiver : BroadcastReceiver() {
             action == "android.intent.action.QUICKBOOT_POWERON" ||
             action == "com.htc.intent.action.QUICKBOOT_POWERON"
         ) {
-            // On API 35+ the OS blocks dataSync FGS starts from BOOT_COMPLETED;
-            // the WorkManager watchdog picks the meter up within minutes.
-            SpeedMeterService.startService(context)
+            // On API 35+ the OS blocks dataSync FGS starts from BOOT_COMPLETED. The service
+            // itself posts the "meter paused" notification when its promotion is refused,
+            // and the WorkManager watchdog keeps trying in the background.
+            if (!SpeedMeterService.startService(context)) SpeedMeterService.notifyPaused(context)
             ServiceScheduler.schedule(context)
         }
     }
