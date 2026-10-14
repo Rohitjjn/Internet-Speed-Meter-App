@@ -2,6 +2,77 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-10-14 · loop 6] — stable signing (installs update in place), pause-by-you, screen-off cadence, acknowledged upload window, monthly limit, CSV attachments
+### Fixed
+- **"App not installed as package conflicts with an existing package."** Every CI build
+  without a `KEYSTORE_BASE64` secret was signed with a *fresh* throwaway key (and debug
+  builds with the runner's own debug keystore), so no Actions build could ever update the
+  previous one. All builds — `debug` and `release` — are now signed with **one stable key**:
+  `KEYSTORE_PATH`/`KEYSTORE_BASE64` if provided, else `my-upload-key.jks` in the repo root
+  (git-ignored, local), else the committed `keystore/ci-shared.p12` (alias `upload`, password
+  `android`). `app/build.gradle.kts` resolves it in that order and prints which one it used;
+  the workflow's *Prepare signing key* step reports it in the job summary; a new *Verify APK
+  signature* step runs `apksigner verify --print-certs` on the artifact. `version_code` is
+  optional and defaults to the **workflow run number**, so a later build is always a higher
+  version. **One-time uninstall required** for installs signed with the old throwaway keys
+  (export History first); README documents it, together with the fact that the committed key
+  is a convenience, not a secret, and how to move to a private key.
+- `softprops/action-gh-release@v2` was passed `overwrite`, which is not an input (an
+  "unexpected input" warning on every release); it is `overwrite_files`.
+- **Upload speed counted bytes the kernel still held.** `OutputStream.write()` returns when
+  the socket *buffer* accepted the bytes, not when they left the phone; at the deadline a
+  slow uplink can still hold a few hundred KB, which the send-side window counted as "sent".
+  Each stream now ends its chunked body at the deadline and waits (≤ `UPLOAD_ACK_WAIT_MS` =
+  3 s) for the server's response; when **every** stream is acknowledged the window runs from
+  the first byte to the **last acknowledgement** and counts everything (pure
+  `computeUploadThroughput`, tested in `SpeedTestMathTest`). A silent stream falls back to
+  the classic send-side window and `ThroughputResult.acknowledgedWindow` is `false`; the
+  result card shows an *Upload window* row either way.
+
+### Added
+- **Pause / resume the meter yourself.** A pause button in the dashboard header (with an
+  explanatory banner and a *Resume* action) and a *Pause meter* switch in Settings stop the
+  service and store `meter_paused_by_user`. `services/MeterControl.kt` is the one place every
+  restart path asks — `MainActivity.onResume` and the stage `LaunchedEffect`, the boot
+  receiver (now `goAsync()` so it can read DataStore), `SpeedKeepAliveWorker`, the timeout
+  retry, and a safety net in `onStartCommand` for stale sticky restarts. The UI always
+  distinguishes **"paused by you"** (hero label, Settings engine status, tile subtitle) from an
+  OS pause; no "meter paused" notice is posted while the user holds the pause.
+  `PreferencesManagerTest`, `SettingsViewModelTest` and a Compose test cover the flag.
+- **Screen-off read cadence.** The service listens to `ACTION_SCREEN_ON/OFF` (initial state
+  from `PowerManager.isInteractive`) and reads every **2 s** instead of 500 ms while the
+  display is off, waking at once when it comes back. The engine divides by the measured
+  window, so the numbers are identical (`SpeedEngineTest.aTwoSecondScreenOffCadenceMeasuresTheSameRate`,
+  `switchingFromScreenOffToOnCadenceDoesNotSpike`); 2 s stays inside the 3 s "frozen" guard,
+  so Doze is still flagged as paused. The diagnostics row shows both cadences.
+- **Optional monthly mobile limit** (Settings → alerts): the same warn-only 50/90/100 % rule
+  per calendar month, one dialog per threshold per month (new DAO query for month-to-date
+  mobile bytes, keys `monthly_limit`, `monthly_limit_unit`, `last_dismissed_monthly_alert[_month]`).
+  The daily and the monthly rule share the pure `util/LimitAlerts.kt` (`LimitAlertsTest`).
+  The History recap shows the month's mobile use against the limit as a thin bar.
+- **Per-day drill-down in History**: tapping a day expands it to download/upload per network
+  from the four stored counters, with expanded/collapsed state semantics.
+- **CSV exports as real attachments.** `util/CsvExport.kt` writes to `cache/exports/` and
+  shares through a manifest `FileProvider` (`${applicationId}.fileprovider`,
+  `res/xml/file_paths.xml`; text fallback if the provider fails). New **speed-test history
+  export** (`util/SpeedTestCsv.kt`: UTC timestamp, epoch ms, bytes/s *and* Mbps, latency,
+  jitter, server; `SpeedTestCsvTest`).
+- **Wallpaper accent (Material You)** on Android 12+: a fifth swatch borrows only the dynamic
+  primary/onPrimary, glass surfaces and status colours stay the app's own. The INK swatch now
+  always shows the app's own primary instead of the currently selected accent.
+- **Reduce motion** switch (Settings → theme): skips the splash zoom/fade, the breathing
+  "waiting" label and the hero digit roll (`LocalReducedMotion`); measurement cadence is
+  untouched.
+- `NotificationText.build()` — the status-bar ticker's two lines as a pure function
+  (`NotificationTextTest`: both directions, chosen unit, transport, total, paused suffix).
+- `publish_check.py --self-test` checks its log/JUnit/lint parsers offline; the test job runs
+  it before Gradle so a broken publisher cannot hide a real failure.
+
+### Changed
+- 31 new EN/HI string pairs (267 keys, parity-tested); `engine_row_cadence_value` names both
+  cadences. `SpeedTestState.uploadAcknowledgedWindow`; `ThroughputResult.acknowledgedWindow`
+  (default `false`, fakes unaffected). Smallest text size stays 10 sp.
+
 ## [2026-10-14 · loop 5] — CI you can read, honest "meter paused", adaptive download, pushed abort, test isolation
 ### Fixed
 - **CI gave no compile signal.** The workflow only ran on manual dispatch, and GitHub's raw

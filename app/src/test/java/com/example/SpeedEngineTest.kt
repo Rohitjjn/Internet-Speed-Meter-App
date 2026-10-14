@@ -108,6 +108,63 @@ class SpeedEngineTest {
     }
 
     @Test
+    fun aTwoSecondScreenOffCadenceMeasuresTheSameRate() {
+        // Screen off: the service reads every 2 s instead of 500 ms (SpeedMeterService.
+        // SCREEN_OFF_READ_INTERVAL_MS). The engine divides by the measured window, so the
+        // number is identical and the window is still "usable" (not flagged paused).
+        val engine = engine()
+        engine.setTransport(Transport.MOBILE)
+        engine.seed(SpeedSample(0L, 0L, 0L))
+        var rx = 0L
+        var tx = 0L
+        val published = ArrayList<com.example.services.LiveSpeed>()
+        for (step in 1..5) {
+            rx += 200_000L // 100 KB/s over 2 s
+            tx += 20_000L  // 10 KB/s over 2 s
+            engine.onSample(SpeedSample(rx, tx, step * 2_000L))?.let { published += it }
+        }
+        assertEquals(5, published.size)
+        published.forEach { live ->
+            assertEquals(100_000L, live.downloadBps)
+            assertEquals(10_000L, live.uploadBps)
+            assertEquals(2_000L, live.windowMs)
+            assertFalse(live.paused)
+        }
+        // Everything crossed the wire really is attributed (nothing dropped, nothing doubled).
+        assertEquals(1_000_000L, published.last().sessionRxBytes)
+        assertEquals(1_000_000L, published.last().mobileRxBytes)
+    }
+
+    @Test
+    fun switchingFromScreenOffToOnCadenceDoesNotSpike() {
+        // 2 s reads, then the screen comes on and the loop goes back to 500 ms reads: the
+        // first short window after the long one must not be charged with the long window's
+        // bytes, and the rate stays flat at 100 KB/s throughout.
+        val engine = engine()
+        engine.setTransport(Transport.WIFI)
+        engine.seed(SpeedSample(0L, 0L, 0L))
+        var rx = 0L
+        var now = 0L
+        val rates = ArrayList<Long>()
+        repeat(3) {
+            now += 2_000L
+            rx += 200_000L
+            engine.onSample(SpeedSample(rx, 0L, now))?.let { rates += it.downloadBps }
+        }
+        // Screen on 700 ms into the next window: an early read, then 500 ms reads.
+        now += 700L
+        rx += 70_000L
+        engine.onSample(SpeedSample(rx, 0L, now))?.let { rates += it.downloadBps }
+        repeat(6) {
+            now += 500L
+            rx += 50_000L
+            engine.onSample(SpeedSample(rx, 0L, now))?.let { rates += it.downloadBps }
+        }
+        assertTrue(rates.size >= 5)
+        rates.forEach { assertEquals(100_000L, it) }
+    }
+
+    @Test
     fun suspendedProcessPublishesZeroInsteadOfAnAveragedFake() {
         val engine = engine()
         engine.setTransport(Transport.WIFI)

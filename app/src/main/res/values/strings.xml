@@ -77,6 +77,11 @@
     <string name="dashboard_title">Speed</string>
     <string name="a11y_network_type">Network type</string>
     <string name="a11y_reset_today">Reset today\'s usage</string>
+    <string name="a11y_pause_meter">Pause the meter</string>
+    <string name="a11y_resume_meter">Resume the meter</string>
+    <string name="action_resume">RESUME</string>
+    <string name="dashboard_paused_title">Meter paused by you</string>
+    <string name="dashboard_paused_body">Nothing is measured or counted until you resume. Today\'s saved total stays.</string>
     <string name="a11y_live_download">Live download speed %1$s</string>
     <string name="a11y_live_upload">Live upload speed %1$s</string>
     <string name="hero_peak">PEAK %1$s</string>
@@ -85,6 +90,7 @@
     <string name="hero_session_just_started">just started</string>
     <string name="hero_last_30_seconds">LAST 30 SECONDS</string>
     <string name="hero_status_paused">PAUSED — ENGINE SUSPENDED</string>
+    <string name="hero_status_paused_by_user">PAUSED BY YOU</string>
     <string name="hero_status_realtime">REAL-TIME</string>
     <string name="hero_status_waiting">WAITING FOR ENGINE</string>
     <string name="usage_mobile_title">Mobile Data</string>
@@ -100,6 +106,9 @@
     <string name="limit_alert_title_reached">Daily Mobile Limit Reached!</string>
     <string name="limit_alert_body">You have used %1$d%% of your daily mobile data limit.\n\nUsed: %2$s of %3$s %4$s.</string>
 
+    <string name="monthly_limit_alert_title_warning">Monthly Mobile Data Warning</string>
+    <string name="monthly_limit_alert_title_reached">Monthly Mobile Limit Reached!</string>
+    <string name="monthly_limit_alert_body">You have used %1$d%% of your monthly mobile data limit.\n\nUsed this month: %2$s of %3$s %4$s.</string>
     <!-- Speed test -->
     <string name="test_eyebrow">REAL MEASUREMENT</string>
     <string name="test_title">Speed Test</string>
@@ -119,6 +128,9 @@
     <string name="result_upload">Upload</string>
     <string name="result_upload_check">Upload check</string>
     <string name="result_upload_check_value">acknowledged · HTTP %1$d</string>
+    <string name="result_upload_window">Upload window</string>
+    <string name="result_upload_window_acknowledged">timed to server acknowledgements</string>
+    <string name="result_upload_window_send_side">send-side (a stream did not answer in time)</string>
     <string name="result_completed">Completed</string>
     <string name="test_fallback_note">The default endpoint did not answer, so this result comes from the fallback host.</string>
     <string name="delta_vs_last_test_up">↑ %1$d%% vs last test</string>
@@ -172,6 +184,11 @@
     <string name="export_subject">Internet Speed Meter — usage history (CSV)</string>
     <string name="export_chooser">Export usage history</string>
 
+    <string name="test_export_subject">Internet Speed Meter — speed test history (CSV)</string>
+    <string name="test_export_chooser">Export speed test history</string>
+    <string name="a11y_export_test_history">Export speed test history as CSV</string>
+    <string name="action_export">EXPORT</string>
+    <string name="history_monthly_limit_line">Mobile %1$s of %2$s</string>
     <!-- Settings -->
     <string name="settings_eyebrow">SYSTEM SETTINGS</string>
     <string name="settings_title">App Preferences</string>
@@ -186,6 +203,9 @@
     <string name="settings_accent">Accent</string>
     <string name="settings_accent_hint">Tints the buttons and the selected nav pill.</string>
     <string name="a11y_accent">%1$s accent</string>
+    <string name="a11y_accent_system">Wallpaper accent (Material You)</string>
+    <string name="settings_reduced_motion">Reduce motion</string>
+    <string name="settings_reduced_motion_hint">Skips the splash zoom, breathing labels and digit roll. Measurements are unaffected.</string>
     <string name="settings_section_alerts">DAILY MOBILE DATA ALERTS</string>
     <string name="settings_limit_title">Daily Mobile Data Limit</string>
     <string name="settings_limit_hint" formatted="false">Get a prominent on-screen warning at 50%, 90% and 100%. The app only warns — it never blocks.</string>
@@ -193,6 +213,12 @@
     <string name="settings_save_limit">Save Limit</string>
     <string name="settings_limit_saved">Saved: %1$s %2$s per day</string>
     <string name="settings_limit_saved_none">No daily limit set — alerts off</string>
+    <string name="settings_monthly_limit_title">Monthly Mobile Data Limit (optional)</string>
+    <string name="settings_monthly_limit_hint" formatted="false">Same warn-only rule per calendar month: one warning at 50%, 90% and 100% of this month\'s mobile use.</string>
+    <string name="settings_monthly_limit_placeholder">e.g. 40</string>
+    <string name="settings_save_monthly_limit">SAVE MONTHLY LIMIT</string>
+    <string name="settings_monthly_limit_saved">Saved: %1$s %2$s per month</string>
+    <string name="settings_monthly_limit_saved_none">No monthly limit set</string>
     <string name="settings_section_permissions">SYSTEM PERMISSIONS</string>
     <string name="settings_usage_access_active">Exact system counters active</string>
     <string name="settings_usage_access_needed">Needed for exact daily totals</string>
@@ -203,6 +229,9 @@
     <string name="settings_section_background">KEEP RUNNING IN BACKGROUND</string>
     <string name="settings_autostart_title">Auto Start &amp; Battery</string>
     <string name="settings_autostart_hint">Some brands kill background apps. Allow both to keep the meter alive 24/7.</string>
+    <string name="settings_pause_title">Pause meter</string>
+    <string name="settings_pause_hint_running">Running. Pausing stops the ticker and all counting until you resume — the app never restarts it on its own.</string>
+    <string name="settings_pause_hint_paused">Paused by you — nothing is measured or counted. Today\'s saved total stays.</string>
     <string name="settings_autostart_button">Autostart</string>
     <string name="settings_battery_button">Battery</string>
     <string name="settings_section_data">DATA MANAGEMENT</string>
@@ -232,11 +261,12 @@
     <string name="settings_engine_title">Live, straight from the OS counters</string>
     <string name="engine_status_running">Running</string>
     <string name="engine_status_paused">Running (paused)</string>
+    <string name="engine_status_paused_by_user">Paused by you</string>
     <string name="engine_status_stopped">Stopped</string>
     <string name="engine_row_status">Status</string>
     <string name="engine_row_source">Counter source</string>
     <string name="engine_row_cadence">Read cadence</string>
-    <string name="engine_row_cadence_value">500 ms · publish %1$d ms window</string>
+    <string name="engine_row_cadence_value">500 ms on-screen · 2 s screen off · %1$d ms window</string>
     <string name="engine_row_samples">Samples this session</string>
     <string name="engine_row_window">Last published window</string>
     <string name="engine_row_network">Network</string>
@@ -255,6 +285,7 @@
     <string name="tile_subtitle_today">Today %1$s</string>
     <string name="tile_subtitle_running">Measuring</string>
     <string name="tile_subtitle_paused">Meter paused</string>
+    <string name="tile_subtitle_paused_by_user">Paused by you</string>
     <string name="widget_today">TODAY</string>
     <string name="widget_breakdown">Mobile %1$s · Wi-Fi %2$s</string>
     <string name="widget_updated">Updated %1$s</string>

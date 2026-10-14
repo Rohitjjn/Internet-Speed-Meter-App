@@ -114,6 +114,12 @@ class PreferencesManager(
         val KEY_TEST_SERVER = stringPreferencesKey("test_server")
         val KEY_TEST_SERVER_URL = stringPreferencesKey("test_server_url")
         val KEY_TEST_SERVER_FLAVOUR = stringPreferencesKey("test_server_flavour")
+        val KEY_METER_PAUSED_BY_USER = booleanPreferencesKey("meter_paused_by_user")
+        val KEY_MONTHLY_LIMIT = doublePreferencesKey("monthly_limit")
+        val KEY_MONTHLY_LIMIT_UNIT = stringPreferencesKey("monthly_limit_unit")
+        val KEY_LAST_DISMISSED_MONTHLY_ALERT = longPreferencesKey("last_dismissed_monthly_alert")
+        val KEY_LAST_DISMISSED_MONTHLY_ALERT_MONTH = stringPreferencesKey("last_dismissed_monthly_alert_month")
+        val KEY_REDUCED_MOTION = booleanPreferencesKey("reduced_motion")
     }
 
     /**
@@ -172,6 +178,55 @@ class PreferencesManager(
         store.edit {
             it[KEY_MOBILE_LIMIT] = limit
             it[KEY_MOBILE_LIMIT_UNIT] = unit
+        }
+    }
+
+    // ---------- Meter paused by the user ----------
+
+    /**
+     * `true` while the user has switched the meter off. Every restart path (app resume,
+     * boot receiver, watchdog worker, timeout retry) asks this before starting the
+     * foreground service, so "paused by you" really stays paused until the user resumes.
+     */
+    val meterPausedByUserFlow: Flow<Boolean> = data.map { it[KEY_METER_PAUSED_BY_USER] ?: false }
+
+    suspend fun setMeterPausedByUser(paused: Boolean) {
+        store.edit { it[KEY_METER_PAUSED_BY_USER] = paused }
+    }
+
+    // ---------- Reduced motion ----------
+
+    /** `true` = the user asked the app to skip its decorative animations (gauge sweep, breathing labels). */
+    val reducedMotionFlow: Flow<Boolean> = data.map { it[KEY_REDUCED_MOTION] ?: false }
+
+    suspend fun setReducedMotion(enabled: Boolean) {
+        store.edit { it[KEY_REDUCED_MOTION] = enabled }
+    }
+
+    // ---------- Monthly mobile data limit (warn-only, optional) ----------
+
+    val monthlyLimitFlow: Flow<Double> = data.map { it[KEY_MONTHLY_LIMIT] ?: 0.0 }
+
+    val monthlyLimitUnitFlow: Flow<String> = data.map { it[KEY_MONTHLY_LIMIT_UNIT] ?: "GB" }
+
+    suspend fun saveMonthlyLimit(limit: Double, unit: String) {
+        store.edit {
+            it[KEY_MONTHLY_LIMIT] = limit
+            it[KEY_MONTHLY_LIMIT_UNIT] = unit
+        }
+    }
+
+    /** Highest monthly tier (50/90/100) the user has dismissed, and for which `yyyy-MM`. */
+    val lastDismissedMonthlyAlertFlow: Flow<Long> = data.map { it[KEY_LAST_DISMISSED_MONTHLY_ALERT] ?: 0L }
+
+    val lastDismissedMonthlyAlertMonthFlow: Flow<String> = data.map {
+        it[KEY_LAST_DISMISSED_MONTHLY_ALERT_MONTH] ?: ""
+    }
+
+    suspend fun saveDismissedMonthlyAlert(level: Long, month: String) {
+        store.edit {
+            it[KEY_LAST_DISMISSED_MONTHLY_ALERT] = level
+            it[KEY_LAST_DISMISSED_MONTHLY_ALERT_MONTH] = month
         }
     }
 

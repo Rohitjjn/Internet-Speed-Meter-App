@@ -95,8 +95,10 @@ import com.example.ui.util.secondary
 import com.example.ui.viewmodel.SpeedTestPhase
 import com.example.ui.viewmodel.SpeedTestState
 import com.example.ui.viewmodel.SpeedTestViewModel
+import com.example.util.CsvExport
 import com.example.util.DeltaMath
 import com.example.util.SpeedFormatter
+import com.example.util.SpeedTestCsv
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -212,7 +214,20 @@ fun SpeedTestScreen(
 
             // ---------------- History ----------------
             if (history.isNotEmpty()) {
-                HistorySection(history = history, onClear = { viewModel.clearHistory() })
+                val historyContext = LocalContext.current
+                HistorySection(
+                    history = history,
+                    onClear = { viewModel.clearHistory() },
+                    onExport = {
+                        CsvExport.share(
+                            context = historyContext,
+                            csv = SpeedTestCsv.build(history),
+                            fileName = CsvExport.fileName("speed-tests"),
+                            subject = historyContext.getString(R.string.test_export_subject),
+                            chooserTitle = historyContext.getString(R.string.test_export_chooser)
+                        )
+                    }
+                )
             }
         }
     }
@@ -411,6 +426,15 @@ private fun ResultOrErrorCard(state: SpeedTestState, palette: GaugePalette, topP
                         stringResource(R.string.result_upload_check_value, state.uploadAckCode)
                     )
                 }
+                if (state.uploadBitsPerSecond != null) {
+                    ResultRow(
+                        stringResource(R.string.result_upload_window),
+                        stringResource(
+                            if (state.uploadAcknowledgedWindow) R.string.result_upload_window_acknowledged
+                            else R.string.result_upload_window_send_side
+                        )
+                    )
+                }
                 ResultRow(stringResource(R.string.result_completed), formatTimestamp(state.finishedAtMillis))
                 if (state.usedFallback) {
                     Spacer(modifier = Modifier.height(6.dp))
@@ -535,7 +559,7 @@ private fun FootNote() {
 }
 
 @Composable
-private fun HistorySection(history: List<SpeedTestResult>, onClear: () -> Unit) {
+private fun HistorySection(history: List<SpeedTestResult>, onClear: () -> Unit, onExport: () -> Unit = {}) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -552,22 +576,40 @@ private fun HistorySection(history: List<SpeedTestResult>, onClear: () -> Unit) 
             fontFamily = FontFamily.Monospace,
             color = secondary()
         )
-        val clearLabel = stringResource(R.string.a11y_clear_test_history)
-        Text(
-            text = stringResource(R.string.action_clear),
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.sp,
-            fontFamily = FontFamily.Monospace,
-            color = AccentDanger,
-            modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .background(glassColor)
-                .border(1.dp, glassBorder, RoundedCornerShape(8.dp))
-                .clickable(onClickLabel = clearLabel, role = Role.Button) { onClear() }
-                .padding(horizontal = 10.dp, vertical = 5.dp)
-                .testTag("speed_test_clear_history")
-        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            val exportLabel = stringResource(R.string.a11y_export_test_history)
+            Text(
+                text = stringResource(R.string.action_export),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(glassColor)
+                    .border(1.dp, glassBorder, RoundedCornerShape(8.dp))
+                    .clickable(onClickLabel = exportLabel, role = Role.Button) { onExport() }
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                    .testTag("speed_test_export_history")
+            )
+            val clearLabel = stringResource(R.string.a11y_clear_test_history)
+            Text(
+                text = stringResource(R.string.action_clear),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+                fontFamily = FontFamily.Monospace,
+                color = AccentDanger,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(glassColor)
+                    .border(1.dp, glassBorder, RoundedCornerShape(8.dp))
+                    .clickable(onClickLabel = clearLabel, role = Role.Button) { onClear() }
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                    .testTag("speed_test_clear_history")
+            )
+        }
     }
     GlassCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
         Column(modifier = Modifier.padding(16.dp)) {

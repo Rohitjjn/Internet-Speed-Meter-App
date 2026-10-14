@@ -64,6 +64,7 @@ import com.example.ui.theme.glassBorder
 import com.example.ui.theme.glassColor
 import com.example.ui.util.secondary
 import com.example.util.DateFormatter
+import com.example.util.LimitAlerts
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -104,6 +105,10 @@ fun MainScreen() {
     }
 
     val todayEntity by repository.getDataByDate(todayString).collectAsState(initial = null)
+    // Month-to-date mobile bytes for the optional monthly limit (key prefix follows today).
+    val monthKey = todayString.take(7)
+    val monthMobileUsed by remember(monthKey) { repository.getThisMonthMobileTotal("$monthKey-%") }
+        .collectAsState(initial = 0L)
 
     val mobileLimit by preferencesManager.mobileLimitFlow.collectAsState(initial = 0.0)
     val mobileLimitUnit by preferencesManager.mobileLimitUnitFlow.collectAsState(initial = "GB")
@@ -113,28 +118,80 @@ fun MainScreen() {
     val effectiveDismissedMobile = if (lastDismissedAlertDate == todayString) lastDismissedMobileAlert else 0L
     val mobileUsed = todayEntity?.mobileTotal ?: 0L
 
-    val factorMobile =
-        if (mobileLimitUnit.uppercase(Locale.ROOT) == "GB") 1024L * 1024L * 1024L else 1024L * 1024L
-    val mobileLimitBytes = (mobileLimit * factorMobile).toLong()
+    val mobileLimitBytes = LimitAlerts.limitBytes(mobileLimit, mobileLimitUnit)
 
-    // Which warning level (if any) is due right now. Kept as a `val` on purpose: a `val`
-    // keeps its non-null smart cast inside the dialog lambdas, a captured `var` does not.
-    val pendingMobileAlert: Long? = if (mobileLimitBytes > 0) {
-        val pct = (mobileUsed.toDouble() / mobileLimitBytes.toDouble()) * 100.0
-        val targetAlertLevel = when {
-            pct >= 100.0 -> 100L
-            pct >= 90.0 -> 90L
-            pct >= 50.0 -> 50L
-            else -> 0L
-        }
-        if (targetAlertLevel > effectiveDismissedMobile) targetAlertLevel else null
-    } else {
-        null
-    }
+    // Which warning level (if any) is due right now (pure, tested rule). Kept as a `val`
+    // on purpose: a `val` keeps its non-null smart cast inside the dialog lambdas.
+    val pendingMobileAlert: Long? = LimitAlerts.pendingLevel(mobileUsed, mobileLimitBytes, effectiveDismissedMobile)
 
     LaunchedEffect(pendingMobileAlert) {
         val level = pendingMobileAlert ?: return@LaunchedEffect
         vibrateLimitAlert(context, level)
+    }
+
+    // ---- optional monthly mobile limit: same warn-only rule, once per threshold per month ----
+    val monthlyLimit by preferencesManager.monthlyLimitFlow.collectAsState(initial = 0.0)
+    val monthlyLimitUnit by preferencesManager.monthlyLimitUnitFlow.collectAsState(initial = "GB")
+    val lastDismissedMonthlyAlert by preferencesManager.lastDismissedMonthlyAlertFlow.collectAsState(initial = 0L)
+    val lastDismissedMonthlyMonth by preferencesManager.lastDismissedMonthlyAlertMonthFlow.collectAsState(initial = "")
+    val effectiveDismissedMonthly = if (lastDismissedMonthlyMonth == monthKey) lastDismissedMonthlyAlert else 0L
+    val monthlyLimitBytes = LimitAlerts.limitBytes(monthlyLimit, monthlyLimitUnit)
+    // The daily dialog has priority: one modal at a time, the monthly one follows once it is dismissed.
+    val pendingMonthlyAlert: Long? = if (pendingMobileAlert == null) {
+        LimitAlerts.pendingLevel(monthMobileUsed, monthlyLimitBytes, effectiveDismissedMonthly)
+    } else {
+        null
+    }
+
+    LaunchedEffect(pendingMonthlyAlert) {
+        val level = pendingMonthlyAlert ?: return@LaunchedEffect
+        vibrateLimitAlert(context, level)
+    }
+
+    pendingMonthlyAlert?.let { level ->
+        AlertDialog(
+            onDismissRequest = {
+                scope.launch { preferencesManager.saveDismissedMonthlyAlert(level, monthKey) }
+            },
+            title = {
+                Text(
+                    text = if (level >= 100L) {
+                        stringResource(R.string.monthly_limit_alert_title_reached)
+                    } else {
+                        stringResource(R.string.monthly_limit_alert_title_warning)
+                    },
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.error
+                )
+            },
+            text = {
+                Text(
+                    text = stringResource(
+                        R.string.monthly_limit_alert_body,
+                        level,
+                        formatBytesWarning(monthMobileUsed),
+                        formatLimitValue(monthlyLimit),
+                        monthlyLimitUnit
+                    ),
+                    color = secondary()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch { preferencesManager.saveDismissedMonthlyAlert(level, monthKey) }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                ) {
+                    Text(stringResource(R.string.action_ok))
+                }
+            },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = MaterialTheme.colorScheme.surface
+        )
     }
 
     // `level` is a non-null lambda parameter, so the dialog lambdas need no smart cast.

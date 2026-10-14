@@ -3,6 +3,7 @@ package com.example
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.PreferencesManager
+import com.example.services.MeterControl
 import com.example.services.SpeedTestServers
 import com.example.ui.viewmodel.SettingsViewModel
 import com.example.util.SpeedUnit
@@ -89,6 +90,30 @@ class SettingsViewModelTest {
             preferences.testServerFlavourFlow.first()
         )
         assertEquals(listOf(SpeedTestServers.CLOUDFLARE), candidates)
+    }
+
+    @Test
+    fun pausingTheMeterIsADurableFlagThatEveryRestartPathReads() = runTest(dispatcher) {
+        MeterControl.resetCacheForTests()
+        viewModel.setMeterPaused(true)
+        assertEquals(true, preferences.meterPausedByUserFlow.first { it })
+        // The in-memory mirror (dashboard button, tile) follows the store.
+        assertEquals(true, MeterControl.pausedByUser.value)
+        assertEquals(false, MeterControl.mayStart(application, preferences))
+
+        viewModel.setMeterPaused(false)
+        assertEquals(false, preferences.meterPausedByUserFlow.first { !it })
+        assertEquals(true, MeterControl.mayStart(application, preferences))
+    }
+
+    @Test
+    fun monthlyLimitAndReducedMotionWritesRoundTrip() = runTest(dispatcher) {
+        viewModel.updateMonthlyLimit(40.0, "GB")
+        assertEquals(40.0, preferences.monthlyLimitFlow.first { it == 40.0 }, 0.0)
+        assertEquals("GB", preferences.monthlyLimitUnitFlow.first())
+
+        viewModel.setReducedMotion(true)
+        assertEquals(true, preferences.reducedMotionFlow.first { it })
     }
 
     @Test

@@ -16,6 +16,8 @@ class DataUsageRepository(private val dataUsageDao: DataUsageDao) {
 
     fun getThisMonthTotal(monthPrefix: String): Flow<Long> = dataUsageDao.getThisMonthTotal(monthPrefix)
 
+    fun getThisMonthMobileTotal(monthPrefix: String): Flow<Long> = dataUsageDao.getThisMonthMobileTotal(monthPrefix)
+
     suspend fun deleteByDate(date: String) {
         dataUsageDao.deleteByDate(date)
     }

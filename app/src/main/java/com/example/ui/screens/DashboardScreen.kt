@@ -63,6 +63,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.R
 import com.example.data.PreferencesManager
+import com.example.services.MeterControl
 import com.example.services.SpeedMeterService
 import com.example.services.Transport
 import com.example.ui.components.AppBackground
@@ -80,6 +81,7 @@ import com.example.ui.theme.SpeedUpDark
 import com.example.ui.theme.glassBorder
 import com.example.ui.theme.glassColor
 import com.example.ui.theme.isDarkModeActive
+import com.example.ui.theme.isReducedMotion
 import com.example.ui.util.dlColor
 import com.example.ui.util.ulColor
 import com.example.ui.util.secondary
@@ -109,6 +111,7 @@ fun DashboardScreen(
     val limitLabel by viewModel.mobileLimitLabel.collectAsState()
     val showResetDialog by viewModel.showResetDialog.collectAsState()
     val permissionGranted by viewModel.permissionGranted.collectAsState()
+    val pausedByUser by viewModel.pausedByUser.collectAsState()
 
     Box(
         modifier = Modifier
@@ -151,22 +154,52 @@ fun DashboardScreen(
                         color = secondary()
                     )
                 }
-                IconButton(
-                    onClick = { viewModel.requestResetTodayUsage() },
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(glassColor)
-                        .border(1.dp, glassBorder, RoundedCornerShape(10.dp))
-                        .size(38.dp)
-                        .testTag("dashboard_reset_today")
-                ) {
-                    AppIcon(
-                        resId = R.drawable.ic_restore,
-                        contentDescription = stringResource(R.string.a11y_reset_today),
-                        tint = AccentDanger,
-                        modifier = Modifier.size(18.dp)
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Pause / resume: the user's own switch. Distinct from an OS pause —
+                    // the hero label says "paused by you" and no restart path overrides it.
+                    IconButton(
+                        onClick = { viewModel.setMeterPaused(!pausedByUser) },
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (pausedByUser) AccentWarning.copy(alpha = 0.14f) else glassColor)
+                            .border(
+                                1.dp,
+                                if (pausedByUser) AccentWarning.copy(alpha = 0.6f) else glassBorder,
+                                RoundedCornerShape(10.dp)
+                            )
+                            .size(38.dp)
+                            .testTag("dashboard_pause_toggle")
+                    ) {
+                        AppIcon(
+                            resId = if (pausedByUser) R.drawable.ic_play else R.drawable.ic_pause,
+                            contentDescription = stringResource(
+                                if (pausedByUser) R.string.a11y_resume_meter else R.string.a11y_pause_meter
+                            ),
+                            tint = if (pausedByUser) AccentWarning else MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    IconButton(
+                        onClick = { viewModel.requestResetTodayUsage() },
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(glassColor)
+                            .border(1.dp, glassBorder, RoundedCornerShape(10.dp))
+                            .size(38.dp)
+                            .testTag("dashboard_reset_today")
+                    ) {
+                        AppIcon(
+                            resId = R.drawable.ic_restore,
+                            contentDescription = stringResource(R.string.a11y_reset_today),
+                            tint = AccentDanger,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
+            }
+
+            if (pausedByUser) {
+                PausedByUserBanner(onResume = { viewModel.setMeterPaused(false) })
             }
 
             if (twoColumn) {
@@ -293,6 +326,7 @@ fun DashboardScreen(
 fun HeroSpeedCard(modifier: Modifier = Modifier) {
     val live by SpeedMeterService.liveSpeedFlow.collectAsState()
     val isRunning by SpeedMeterService.isServiceRunning.collectAsState()
+    val pausedByUser by MeterControl.pausedByUser.collectAsState()
     val context = LocalContext.current
     val preferencesManager = remember(context) { PreferencesManager(context) }
     val speedUnit by preferencesManager.speedUnitFlow.collectAsState(initial = SpeedUnit.BYTES)
@@ -303,14 +337,17 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
     val liveColor = if (isDark) LiveGreenDark else LiveGreen
 
     // Digit roll: the displayed value chases the measured value instead of swapping.
+    // With reduced motion the number snaps straight to the measured value.
+    val reducedMotion = isReducedMotion()
+    val digitSpec = tween<Float>(durationMillis = if (reducedMotion) 0 else 480, easing = FastOutSlowInEasing)
     val animatedDownload by animateFloatAsState(
         targetValue = live.downloadBps.coerceAtLeast(0L).toFloat(),
-        animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
+        animationSpec = digitSpec,
         label = "hero_download_digits"
     )
     val animatedUpload by animateFloatAsState(
         targetValue = live.uploadBps.coerceAtLeast(0L).toFloat(),
-        animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
+        animationSpec = digitSpec,
         label = "hero_upload_digits"
     )
 
@@ -567,7 +604,8 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
                     letterSpacing = 1.sp,
                     color = secondary().copy(alpha = 0.7f)
                 )
-                val waiting = !isRunning && !live.paused
+                val userPaused = pausedByUser && !isRunning
+                val waiting = !isRunning && !live.paused && !userPaused
                 // "Waiting" breathes instead of sitting there: the engine is starting, and
                 // a static label reads like a stuck one. Nothing is faked — the number
                 // stays 0 until a real sample is published.
@@ -583,6 +621,7 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
                 )
                 Text(
                     text = when {
+                        userPaused -> stringResource(R.string.hero_status_paused_by_user)
                         live.paused -> stringResource(R.string.hero_status_paused)
                         isRunning -> stringResource(R.string.hero_status_realtime)
                         else -> stringResource(R.string.hero_status_waiting)
@@ -592,9 +631,9 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
                     fontFamily = FontFamily.Monospace,
                     letterSpacing = 1.sp,
                     color = when {
-                        live.paused -> AccentWarning
+                        userPaused || live.paused -> AccentWarning
                         isRunning -> liveColor
-                        else -> secondary().copy(alpha = if (waiting) waitingAlpha else 0.7f)
+                        else -> secondary().copy(alpha = if (waiting && !reducedMotion) waitingAlpha else 0.7f)
                     },
                     modifier = Modifier
                         .testTag("live_speed_status_label")
@@ -602,6 +641,60 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
                         .semantics { liveRegion = LiveRegionMode.Polite }
                 )
             }
+        }
+    }
+}
+
+/**
+ * Shown under the header while the user holds the pause: says plainly that nothing is being
+ * measured or counted (today's saved total stays), with the way back one tap away.
+ */
+@Composable
+private fun PausedByUserBanner(onResume: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(AccentWarning.copy(alpha = 0.10f))
+            .border(1.dp, AccentWarning.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .testTag("dashboard_paused_banner"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        AppIcon(
+            resId = R.drawable.ic_pause,
+            contentDescription = null,
+            tint = AccentWarning,
+            modifier = Modifier.size(16.dp)
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.dashboard_paused_title),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Text(
+                text = stringResource(R.string.dashboard_paused_body),
+                fontSize = 11.sp,
+                color = secondary(),
+                lineHeight = 15.sp
+            )
+        }
+        TextButton(
+            onClick = onResume,
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+            modifier = Modifier
+                .border(1.dp, glassBorder, RoundedCornerShape(10.dp))
+                .testTag("dashboard_resume_button")
+        ) {
+            Text(
+                text = stringResource(R.string.action_resume),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = AccentWarning
+            )
         }
     }
 }

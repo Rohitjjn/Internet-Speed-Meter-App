@@ -5,8 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -18,6 +20,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -32,7 +35,6 @@ import com.example.data.NetworkStatsHelper
 import com.example.data.PreferencesManager
 import com.example.data.ResetOffsets
 import com.example.data.TransportBytes
-import com.example.util.BytesFormatter
 import com.example.util.DateFormatter
 import com.example.util.SpeedFormatter
 import com.example.widget.TodayUsageWidget
@@ -47,6 +49,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** One live network interface as reported by the kernel (diagnostics panel). */
 data class InterfaceStat(val name: String, val kind: InterfaceKind, val rx: Long, val tx: Long)
@@ -62,7 +65,7 @@ data class EngineStatus(
  * The real-time engine of the app.
  *
  * ```
- *  ┌ 500 ms read loop (Dispatchers.Default) ────────────────────────────────┐
+ *  ┌ 500 ms read loop (Dispatchers.Default) — 2 s while the screen is off ─┐
  *  │  TrafficStats ⇄ /proc/net/dev  →  SpeedEngine (pure maths)              │
  *  │  → publishes ~1 Hz: live speed, session totals, 60 s average, history   │
  *  │  → status-bar notification (only redrawn when the text actually changes)│
@@ -110,6 +113,25 @@ class SpeedMeterService : Service() {
     private var speedUnit: SpeedUnit = SpeedUnit.BYTES
 
     private var networkCallbackRegistered = false
+
+    /**
+     * Whether the display is interactive. With the screen off nothing can show the live
+     * number (the notification is not visible either), so the read loop slows down to
+     * [SCREEN_OFF_READ_INTERVAL_MS]; the engine divides by the *measured* window, so the
+     * maths is unaffected (`SpeedEngineTest.aTwoSecondScreenOffCadenceMeasuresTheSameRate`).
+     * A StateFlow, so a screen-on event can cut a 2 s wait short instead of being polled.
+     */
+    private val screenInteractive = MutableStateFlow(true)
+    private var screenReceiverRegistered = false
+
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                Intent.ACTION_SCREEN_ON -> screenInteractive.value = true
+                Intent.ACTION_SCREEN_OFF -> screenInteractive.value = false
+            }
+        }
+    }
 
     // ----- daily accounting state -----
     private var hasUsageStatsPermission = false
@@ -169,7 +191,15 @@ class SpeedMeterService : Service() {
          * never split across an assumed window, which is what made the old 1 Hz loop
          * publish stuttering duplicate values.
          */
-        private const val READ_INTERVAL_MS = 500L
+        const val READ_INTERVAL_MS = 500L
+
+        /**
+         * Read cadence while the screen is off. Nobody can see the ticker then, and the
+         * engine measures real elapsed windows, so reading four times less often changes
+         * only the battery cost, not a single number. 2 s stays well inside the engine's
+         * 3 s "process was frozen" guard, which keeps doing its job in Doze.
+         */
+        const val SCREEN_OFF_READ_INTERVAL_MS = 2_000L
         private const val ACCOUNTING_PERIOD_MS = 15_000L
 
         private val _liveSpeedFlow = MutableStateFlow(LiveSpeed())
@@ -291,6 +321,7 @@ class SpeedMeterService : Service() {
             preferencesManager.speedUnitFlow.collect { speedUnit = it }
         }
         registerNetworkCallback()
+        registerScreenReceiver()
         pendingTransport = resolveTransport()
         _networkTypeFlow.value = pendingTransport.toNetworkLabel()
         startSpeedTicker()
@@ -301,6 +332,11 @@ class SpeedMeterService : Service() {
         _isServiceRunning.value = true
         if (startForegroundWithNotification()) {
             clearPausedNotification(this)
+            // Safety net for a stale restart path (an old WorkManager retry, a sticky
+            // restart): a meter the user paused stops again right away.
+            serviceScope.launch {
+                if (MeterControl.isPausedByUser(this@SpeedMeterService)) stopSelf()
+            }
         } else {
             // `startForeground` itself was refused (API 35+ dataSync budget, or a
             // background-start rule): the service is stopping — say so.
@@ -353,6 +389,7 @@ class SpeedMeterService : Service() {
         tickerJob?.cancel()
         accountingJob?.cancel()
         unregisterNetworkCallback()
+        unregisterScreenReceiver()
         serviceJob.cancel()
         _isServiceRunning.value = false
         _liveSpeedFlow.value = LiveSpeed()
@@ -399,6 +436,35 @@ class SpeedMeterService : Service() {
             e.printStackTrace()
         }
         networkCallbackRegistered = false
+    }
+
+    // ============================== SCREEN STATE (PUSH) ==============================
+
+    private fun registerScreenReceiver() {
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            screenInteractive.value = pm?.isInteractive ?: true
+            val filter = IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_SCREEN_OFF)
+            }
+            // Protected system broadcasts: no permission, and NOT_EXPORTED still receives them.
+            ContextCompat.registerReceiver(this, screenReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+            screenReceiverRegistered = true
+        } catch (e: Exception) {
+            // Without the receiver the loop simply keeps the on-screen cadence.
+            e.printStackTrace()
+        }
+    }
+
+    private fun unregisterScreenReceiver() {
+        if (!screenReceiverRegistered) return
+        try {
+            unregisterReceiver(screenReceiver)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        screenReceiverRegistered = false
     }
 
     private fun onNetworkChanged() {
@@ -472,14 +538,23 @@ class SpeedMeterService : Service() {
 
             var nextReadAt = SystemClock.elapsedRealtime() + READ_INTERVAL_MS
             while (true) {
-                val now = SystemClock.elapsedRealtime()
-                delay((nextReadAt - now).coerceIn(10L, 5_000L))
-                nextReadAt += READ_INTERVAL_MS
+                val remaining = (nextReadAt - SystemClock.elapsedRealtime()).coerceIn(10L, 5_000L)
+                if (screenInteractive.value) {
+                    delay(remaining)
+                } else {
+                    // Screen off: sleep the long interval, but wake at once when the
+                    // screen comes back so the first visible number is not 2 s stale.
+                    withTimeoutOrNull(remaining) { screenInteractive.first { it } }
+                }
                 val readAt = SystemClock.elapsedRealtime()
-                if (readAt > nextReadAt + READ_INTERVAL_MS) nextReadAt = readAt + READ_INTERVAL_MS
+                // Fixed delay from the actual read: a late wake-up (Doze) or an early one
+                // (screen on) both simply schedule the next read one interval from now.
+                // The engine never assumes the interval — it divides by the measured window.
+                nextReadAt = readAt + if (screenInteractive.value) READ_INTERVAL_MS else SCREEN_OFF_READ_INTERVAL_MS
 
                 // Self-healing: on ROMs where the connectivity callback is unreliable,
-                // re-resolve the transport once every 30 s (one binder call, not one per tick).
+                // re-resolve the transport once every 60 reads — 30 s on-screen, 2 min with
+                // the screen off (one binder call, not one per tick).
                 readsSinceResolve++
                 if (readsSinceResolve >= 60) {
                     readsSinceResolve = 0
@@ -777,25 +852,7 @@ class SpeedMeterService : Service() {
     }
 
     private fun buildSpeedNotification(live: LiveSpeed): Notification {
-        val networkLabel = getString(
-            when (live.transport) {
-                Transport.WIFI -> R.string.network_wifi
-                Transport.ETHERNET -> R.string.network_ethernet
-                Transport.VPN -> R.string.network_vpn
-                Transport.MOBILE -> R.string.network_mobile
-                Transport.NONE -> R.string.network_offline
-            }
-        )
-        val todayTotal = _todayUsageFlow.value.total
-        val title = getString(
-            R.string.notification_speed_title,
-            SpeedFormatter.format(live.steadyDownloadBps, speedUnit),
-            SpeedFormatter.format(live.steadyUploadBps, speedUnit)
-        )
-        val text = buildString {
-            append(getString(R.string.notification_text, networkLabel, BytesFormatter.format(todayTotal)))
-            if (live.paused) append(getString(R.string.notification_paused_suffix))
-        }
+        val (title, text) = NotificationText.build(this, live, _todayUsageFlow.value.total, speedUnit)
 
         return try {
             val builder = NotificationCompat.Builder(this, CHANNEL_ID)

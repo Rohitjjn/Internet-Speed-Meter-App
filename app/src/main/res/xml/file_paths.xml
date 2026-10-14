@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- CSV exports are written to cache/exports/ and shared through the FileProvider below;
+     nothing is ever written to shared storage, so no storage permission is needed. -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="exports" path="exports/" />
+</paths>

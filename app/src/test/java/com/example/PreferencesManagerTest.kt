@@ -90,6 +90,34 @@ class PreferencesManagerTest {
     }
 
     @Test
+    fun theUserPauseFlagDefaultsToOffAndRoundTrips() = runTest {
+        assertFalse(preferences.meterPausedByUserFlow.first())
+        preferences.setMeterPausedByUser(true)
+        assertTrue(preferences.meterPausedByUserFlow.first())
+        preferences.setMeterPausedByUser(false)
+        assertFalse(preferences.meterPausedByUserFlow.first())
+    }
+
+    @Test
+    fun monthlyLimitAndItsDismissalRoundTrip() = runTest {
+        assertEquals(0.0, preferences.monthlyLimitFlow.first(), 0.0)
+        preferences.saveMonthlyLimit(40.0, "GB")
+        assertEquals(40.0, preferences.monthlyLimitFlow.first(), 0.0001)
+        assertEquals("GB", preferences.monthlyLimitUnitFlow.first())
+
+        preferences.saveDismissedMonthlyAlert(90L, "2026-10")
+        assertEquals(90L, preferences.lastDismissedMonthlyAlertFlow.first())
+        assertEquals("2026-10", preferences.lastDismissedMonthlyAlertMonthFlow.first())
+    }
+
+    @Test
+    fun reducedMotionDefaultsToOffAndRoundTrips() = runTest {
+        assertFalse(preferences.reducedMotionFlow.first())
+        preferences.setReducedMotion(true)
+        assertTrue(preferences.reducedMotionFlow.first())
+    }
+
+    @Test
     fun mobileLimitRoundTripsWithItsUnit() = runTest {
         preferences.saveMobileLimit(2.5, "GB")
         assertEquals(2.5, preferences.mobileLimitFlow.first(), 0.0001)

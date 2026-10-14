@@ -9,6 +9,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.services.Connectivity
 import com.example.services.LatencyResult
 import com.example.services.LiveSpeed
+import com.example.services.MeterControl
 import com.example.services.SpeedTestRunner
 import com.example.services.SpeedTestServers
 import com.example.services.TestAbortSignal
@@ -73,6 +74,10 @@ class ScreensRenderTest {
         composeRule.onNodeWithTag("limits_card").assertExists()
         composeRule.onNodeWithTag("permissions_card").assertExists()
         composeRule.onNodeWithTag("test_server_card").assertExists()
+        // Loop 6 additions: the user's pause switch, the optional monthly limit, reduced motion.
+        composeRule.onNodeWithTag("meter_pause_switch").assertExists()
+        composeRule.onNodeWithTag("monthly_limit_input").assertExists()
+        composeRule.onNodeWithTag("reduced_motion_switch").assertExists()
         // Collapsed by default: the saved summary is visible, the options are not.
         // The summary lives inside the clickable header, i.e. inside a merged node.
         composeRule.onNodeWithTag("saved_server_label", useUnmergedTree = true).assertExists()
@@ -95,6 +100,26 @@ class ScreensRenderTest {
 
     private fun readStoredServer(): String =
         runBlocking(Dispatchers.IO) { isolated.manager.testServerFlow.first() }
+
+    @Test
+    fun theSettingsPauseSwitchWritesTheDurableFlag() {
+        MeterControl.resetCacheForTests()
+        val viewModel = SettingsViewModel(application, isolated.manager)
+        composeRule.setContent {
+            MyApplicationTheme(darkTheme = false) {
+                SettingsScreen(viewModel = viewModel)
+            }
+        }
+        composeRule.onNodeWithTag("meter_pause_switch").performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.waitForIdle()
+            runBlocking(Dispatchers.IO) { isolated.manager.meterPausedByUserFlow.first() }
+        }
+        assertEquals(true, MeterControl.pausedByUser.value)
+        // Clean up the process-wide mirror for the other tests.
+        runBlocking(Dispatchers.IO) { isolated.manager.setMeterPausedByUser(false) }
+        MeterControl.resetCacheForTests()
+    }
 
     @Test
     fun speedTestIdleRendersGaugeAndStartButtonWithoutANetwork() {
