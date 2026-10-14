@@ -132,7 +132,9 @@ class SpeedEngineTest {
         }
         // Everything crossed the wire really is attributed (nothing dropped, nothing doubled).
         assertEquals(1_000_000L, published.last().sessionRxBytes)
-        assertEquals(1_000_000L, published.last().mobileRxBytes)
+        assertEquals(100_000L, published.last().sessionTxBytes)
+        assertEquals(1_000_000L, engine.attributedTotals()[Transport.MOBILE]?.rx)
+        assertEquals(100_000L, engine.attributedTotals()[Transport.MOBILE]?.tx)
     }
 
     @Test
