@@ -25,6 +25,10 @@ interface DataUsageDao {
     @Query("SELECT COALESCE(SUM(mobileRx + mobileTx + wifiRx + wifiTx), 0) FROM daily_data_usage WHERE date LIKE :monthPrefix")
     fun getThisMonthTotal(monthPrefix: String): Flow<Long>
 
+    /** Month-to-date **mobile** bytes — what the optional monthly limit is compared against. */
+    @Query("SELECT COALESCE(SUM(mobileRx + mobileTx), 0) FROM daily_data_usage WHERE date LIKE :monthPrefix")
+    fun getThisMonthMobileTotal(monthPrefix: String): Flow<Long>
+
     @Query("DELETE FROM daily_data_usage WHERE date = :date")
     suspend fun deleteByDate(date: String)
 

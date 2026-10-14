@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit
  *  - A 60-minute watchdog restarts the service if it was ever stopped — and when the OS
  *    refuses the restart it posts the "meter paused" notification instead of failing
  *    silently (the user would otherwise believe the meter is still counting).
+ *  - A meter the user paused ([MeterControl]) is left alone by both paths.
  */
 class SpeedKeepAliveWorker(
     context: Context,
@@ -28,6 +29,8 @@ class SpeedKeepAliveWorker(
 
     override suspend fun doWork(): Result {
         if (SpeedMeterService.isServiceRunning.value) return Result.success()
+        // Paused by the user: the watchdog has nothing to guard. No retry, no notice.
+        if (!MeterControl.mayStart(applicationContext)) return Result.success()
         val accepted = SpeedMeterService.startService(applicationContext)
         if (accepted) delay(4_000L) // give the service time to come up (and to be refused)
         if (SpeedMeterService.isServiceRunning.value) return Result.success()

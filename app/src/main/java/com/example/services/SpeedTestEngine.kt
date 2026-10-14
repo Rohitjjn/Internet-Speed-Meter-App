@@ -14,6 +14,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.CopyOnWriteArraySet
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /** Round-trip statistics of the latency probe (milliseconds). */
@@ -39,7 +40,14 @@ data class ThroughputResult(
     val streams: Int,
     val totalBytes: Long = bytes,
     /** HTTP status the server answered the upload verification with (0 = not applicable). */
-    val serverAckCode: Int = 0
+    val serverAckCode: Int = 0,
+    /**
+     * Upload only: `true` when the window was closed by the server's responses (every
+     * stream's body acknowledged), so the bytes still sitting in the socket send buffer
+     * at the deadline were timed until they really arrived — see
+     * [SpeedTestEngine.computeUploadThroughput]. `false` = classic send-side window.
+     */
+    val acknowledgedWindow: Boolean = false
 ) {
     val megabytesPerSecond: Double get() = bytes / 1024.0 / 1024.0 / (durationMs / 1000.0)
 }
@@ -144,7 +152,11 @@ interface SpeedTestRunner {
  *  - **Upload** — one small fixed-length `POST` the server must **acknowledge** (HTTP
  *    2xx/3xx), then several parallel chunked `POST` streams, counting the bytes the socket
  *    accepted. A proxy or captive portal that swallows uploads therefore fails the test
- *    honestly instead of producing a number.
+ *    honestly instead of producing a number. At the deadline each stream ends its body
+ *    and waits (bounded by [UPLOAD_ACK_WAIT_MS]) for the server's response: when every
+ *    stream is answered, the window closes at the **last acknowledgement**, so bytes that
+ *    were only buffered by the kernel at the deadline are timed until they really arrived
+ *    instead of being counted as "sent" (the send-buffer correction).
  *
  * Throughput is averaged over a **measured window**: it opens [DOWNLOAD_GRACE_MS] /
  * [UPLOAD_GRACE_MS] after the first byte (TCP slow start is warm-up, not line speed —
@@ -190,6 +202,14 @@ object SpeedTestEngine {
 
     /** Size of the fixed-length upload the server has to acknowledge before the streams start. */
     const val UPLOAD_ACK_BYTES = 32 * 1024
+
+    /**
+     * How long the upload deadline waits for the server to answer the streams' bodies.
+     * Covers one round trip plus draining what the kernel still held when the deadline
+     * hit (a few hundred KB on a slow uplink); a stream that stays silent longer is cut
+     * and the phase falls back to the send-side window (flagged on the result).
+     */
+    const val UPLOAD_ACK_WAIT_MS = 3_000L
 
     /** First download request per stream (bytes); see [nextRequestBytes]. */
     const val INITIAL_REQUEST_BYTES = 20_000_000L
@@ -415,6 +435,8 @@ object SpeedTestEngine {
 
             val counter = AtomicLong(0L)
             val firstByteNs = AtomicLong(0L)
+            val acknowledged = AtomicInteger(0)
+            val lastAckNs = AtomicLong(0L)
             val startNs = System.nanoTime()
             val payload = ByteArray(BUFFER_SIZE)
 
@@ -442,9 +464,19 @@ object SpeedTestEngine {
                             }
                             runCatching { output.flush() }
                         }
+                        // The body is closed (final chunk sent). The server's answer is the
+                        // acknowledgement that everything — including what the kernel was
+                        // still holding at the deadline — has arrived. Bounded by the read
+                        // timeout and by closeUploadStreams(), which cuts silent sockets.
+                        val code = connection.responseCode
+                        if (code in 200..399) {
+                            val ackNs = System.nanoTime()
+                            lastAckNs.updateAndGet { maxOf(it, ackNs) }
+                            acknowledged.incrementAndGet()
+                        }
                     } catch (e: Exception) {
-                        // Socket cut when the deadline hits: the bytes already accepted are
-                        // the real upload for this phase.
+                        // Socket cut when the deadline hits (a stalled stream): the bytes
+                        // already accepted stay counted, but this stream is not acknowledged.
                     } finally {
                         connections.untrack(connection)
                         runCatching { connection.disconnect() }
@@ -453,7 +485,7 @@ object SpeedTestEngine {
             }
 
             val window = runPhaseClock(startNs, durationMs, UPLOAD_GRACE_MS, counter, firstByteNs, abort, onProgress)
-            val closed = closeStreams(jobs, connections, counter)
+            val closed = closeUploadStreams(jobs, connections, counter)
             sentinel.cancel()
             abort.throwIfAborted()
             if (closed.bytes <= 0L) {
@@ -462,13 +494,15 @@ object SpeedTestEngine {
                     message = "Upload failed — nothing could be sent to ${server.host}"
                 )
             }
-            computeThroughput(
-                totalBytes = closed.bytes,
+            val allAcknowledged = acknowledged.get() == streams && lastAckNs.get() > 0L
+            computeUploadThroughput(
+                totalBytes = if (allAcknowledged) closed.settledBytes else closed.bytes,
                 startNs = startNs,
                 firstByteNs = firstByteNs.get(),
                 graceNs = window.graceNs,
                 graceBytes = window.graceBytes,
-                endNs = closed.endNs,
+                sendEndNs = closed.endNs,
+                lastAckNs = if (allAcknowledged) lastAckNs.get() else 0L,
                 streams = streams
             ).copy(serverAckCode = ackCode)
         }
@@ -532,7 +566,12 @@ object SpeedTestEngine {
 
     private class PhaseWindow(val graceNs: Long, val graceBytes: Long)
 
-    private class ClosedStreams(val endNs: Long, val bytes: Long)
+    /**
+     * [endNs]/[bytes] are taken together right after the deadline (the send-side window);
+     * [settledBytes] is the counter once every stream has finished — equal to [bytes]
+     * unless a straggler was still writing, and the right total for an acknowledged window.
+     */
+    private class ClosedStreams(val endNs: Long, val bytes: Long, val settledBytes: Long = bytes)
 
     /**
      * The progress loop of a throughput phase: feeds the gauge every ~250 ms with the rate
@@ -589,6 +628,25 @@ object SpeedTestEngine {
     }
 
     /**
+     * Upload deadline handling. Same send-side snapshot as [closeStreams], but the streams
+     * are then given [UPLOAD_ACK_WAIT_MS] to receive the server's response before the
+     * sockets are cut: a stream that answers in time proves its bytes arrived and stamps
+     * the acknowledgement time; one that stays silent is disconnected and the phase falls
+     * back to the send-side window.
+     */
+    private suspend fun closeUploadStreams(jobs: List<Job>, connections: ConnectionSet, counter: AtomicLong): ClosedStreams {
+        withTimeoutOrNull(JOIN_GRACE_MS) { jobs.joinAll() }
+        val endNs = System.nanoTime()
+        val bytes = counter.get()
+        withTimeoutOrNull(UPLOAD_ACK_WAIT_MS) { jobs.joinAll() }
+        val settledBytes = counter.get()
+        connections.disconnectAll()
+        jobs.forEach { it.cancel() }
+        withTimeoutOrNull(JOIN_GRACE_MS) { jobs.joinAll() }
+        return ClosedStreams(endNs, bytes, settledBytes)
+    }
+
+    /**
      * Pure window maths (unit-tested in `SpeedTestMathTest`).
      *
      * - no first byte → the whole phase is the window (the caller has already thrown when
@@ -620,6 +678,48 @@ object SpeedTestEngine {
             durationMs = durationMs,
             streams = streams,
             totalBytes = totalBytes
+        )
+    }
+
+    /**
+     * Upload window maths (unit-tested in `SpeedTestMathTest`) — the send-buffer correction.
+     *
+     * Writing to a socket only hands bytes to the kernel: at the deadline a slow uplink
+     * can still hold a few hundred KB that have not left the phone, and counting them as
+     * "sent by the deadline" overstates the speed — most on the slow lines where the
+     * number matters most. So when **every** stream received the server's response (the
+     * acknowledgement that its whole body arrived) the window runs from the first byte to
+     * the **last acknowledgement** and counts all bytes: everything that was sent, over
+     * the time it really took to arrive. No warm-up is subtracted on that path — the grace
+     * counter is a *sent* count, and excluding bytes that were only buffered at the grace
+     * mark would under-report far more than slow start over-reports.
+     *
+     * When a stream was cut before answering (stalled socket, a proxy that never responds)
+     * the maths falls back to the send-side window of [computeThroughput] and the result
+     * carries [ThroughputResult.acknowledgedWindow] = `false` so the UI can say so.
+     */
+    internal fun computeUploadThroughput(
+        totalBytes: Long,
+        startNs: Long,
+        firstByteNs: Long,
+        graceNs: Long,
+        graceBytes: Long,
+        sendEndNs: Long,
+        lastAckNs: Long,
+        streams: Int
+    ): ThroughputResult {
+        if (lastAckNs <= 0L) {
+            return computeThroughput(totalBytes, startNs, firstByteNs, graceNs, graceBytes, sendEndNs, streams)
+        }
+        val windowStartNs = if (firstByteNs > 0L) firstByteNs else startNs
+        val durationMs = ((lastAckNs - windowStartNs) / 1_000_000L).coerceAtLeast(1L)
+        return ThroughputResult(
+            bitsPerSecond = totalBytes * 8.0 / (durationMs / 1000.0),
+            bytes = totalBytes,
+            durationMs = durationMs,
+            streams = streams,
+            totalBytes = totalBytes,
+            acknowledgedWindow = true
         )
     }
 

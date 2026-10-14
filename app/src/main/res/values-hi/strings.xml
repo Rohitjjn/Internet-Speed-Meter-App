@@ -77,6 +77,11 @@
     <string name="dashboard_title">स्पीड</string>
     <string name="a11y_network_type">नेटवर्क प्रकार</string>
     <string name="a11y_reset_today">आज का उपयोग रीसेट करें</string>
+    <string name="a11y_pause_meter">मीटर रोकें</string>
+    <string name="a11y_resume_meter">मीटर फिर शुरू करें</string>
+    <string name="action_resume">फिर शुरू करें</string>
+    <string name="dashboard_paused_title">मीटर आपने रोका है</string>
+    <string name="dashboard_paused_body">फिर शुरू करने तक कुछ भी मापा या गिना नहीं जाएगा। आज का सहेजा हुआ कुल बना रहेगा।</string>
     <string name="a11y_live_download">लाइव डाउनलोड स्पीड %1$s</string>
     <string name="a11y_live_upload">लाइव अपलोड स्पीड %1$s</string>
     <string name="hero_peak">पीक %1$s</string>
@@ -85,6 +90,7 @@
     <string name="hero_session_just_started">अभी शुरू हुआ</string>
     <string name="hero_last_30_seconds">पिछले 30 सेकंड</string>
     <string name="hero_status_paused">रुका हुआ — इंजन निलंबित</string>
+    <string name="hero_status_paused_by_user">आपने रोका है</string>
     <string name="hero_status_realtime">रियल-टाइम</string>
     <string name="hero_status_waiting">इंजन की प्रतीक्षा</string>
     <string name="usage_mobile_title">मोबाइल डेटा</string>
@@ -100,6 +106,9 @@
     <string name="limit_alert_title_reached">दैनिक मोबाइल सीमा पूरी हुई!</string>
     <string name="limit_alert_body">आपने अपनी दैनिक मोबाइल डेटा सीमा का %1$d%% उपयोग कर लिया है।\n\nउपयोग: %3$s %4$s में से %2$s।</string>
 
+    <string name="monthly_limit_alert_title_warning">मासिक मोबाइल डेटा चेतावनी</string>
+    <string name="monthly_limit_alert_title_reached">मासिक मोबाइल सीमा पूरी!</string>
+    <string name="monthly_limit_alert_body">आपने अपनी मासिक मोबाइल डेटा सीमा का %1$d%% उपयोग कर लिया है।\n\nइस महीने उपयोग: %3$s %4$s में से %2$s।</string>
     <!-- Speed test -->
     <string name="test_eyebrow">असली माप</string>
     <string name="test_title">स्पीड टेस्ट</string>
@@ -119,6 +128,9 @@
     <string name="result_upload">अपलोड</string>
     <string name="result_upload_check">अपलोड जाँच</string>
     <string name="result_upload_check_value">सर्वर ने स्वीकारा · HTTP %1$d</string>
+    <string name="result_upload_window">अपलोड विंडो</string>
+    <string name="result_upload_window_acknowledged">सर्वर की पुष्टि तक मापा गया</string>
+    <string name="result_upload_window_send_side">भेजने की ओर से (एक स्ट्रीम ने समय पर जवाब नहीं दिया)</string>
     <string name="result_completed">पूरा हुआ</string>
     <string name="test_fallback_note">डिफ़ॉल्ट सर्वर ने जवाब नहीं दिया, इसलिए यह परिणाम फ़ॉलबैक होस्ट से है।</string>
     <string name="delta_vs_last_test_up">↑ पिछले टेस्ट से %1$d%% ज़्यादा</string>
@@ -172,6 +184,11 @@
     <string name="export_subject">इंटरनेट स्पीड मीटर — उपयोग इतिहास (CSV)</string>
     <string name="export_chooser">उपयोग इतिहास निर्यात करें</string>
 
+    <string name="test_export_subject">Internet Speed Meter — स्पीड टेस्ट इतिहास (CSV)</string>
+    <string name="test_export_chooser">स्पीड टेस्ट इतिहास निर्यात करें</string>
+    <string name="a11y_export_test_history">स्पीड टेस्ट इतिहास CSV में निर्यात करें</string>
+    <string name="action_export">निर्यात</string>
+    <string name="history_monthly_limit_line">मोबाइल %2$s में से %1$s</string>
     <!-- Settings -->
     <string name="settings_eyebrow">सिस्टम सेटिंग्स</string>
     <string name="settings_title">ऐप प्राथमिकताएँ</string>
@@ -186,6 +203,9 @@
     <string name="settings_accent">एक्सेंट रंग</string>
     <string name="settings_accent_hint">बटनों और चुने हुए नेव पिल का रंग।</string>
     <string name="a11y_accent">%1$s एक्सेंट</string>
+    <string name="a11y_accent_system">वॉलपेपर रंग (Material You)</string>
+    <string name="settings_reduced_motion">मोशन कम करें</string>
+    <string name="settings_reduced_motion_hint">स्प्लैश ज़ूम, धड़कते लेबल और अंकों का रोल छोड़ देता है। माप पर कोई असर नहीं।</string>
     <string name="settings_section_alerts">दैनिक मोबाइल डेटा अलर्ट</string>
     <string name="settings_limit_title">दैनिक मोबाइल डेटा सीमा</string>
     <string name="settings_limit_hint" formatted="false">50%, 90% और 100% पर स्क्रीन पर स्पष्ट चेतावनी पाएँ। ऐप सिर्फ़ चेतावनी देता है — कभी रोकता नहीं।</string>
@@ -193,6 +213,12 @@
     <string name="settings_save_limit">सीमा सहेजें</string>
     <string name="settings_limit_saved">सहेजा गया: %1$s %2$s प्रतिदिन</string>
     <string name="settings_limit_saved_none">कोई दैनिक सीमा नहीं — अलर्ट बंद</string>
+    <string name="settings_monthly_limit_title">मासिक मोबाइल डेटा सीमा (वैकल्पिक)</string>
+    <string name="settings_monthly_limit_hint" formatted="false">हर कैलेंडर महीने के लिए वही केवल-चेतावनी नियम: इस महीने के मोबाइल उपयोग के 50%, 90% और 100% पर एक-एक चेतावनी।</string>
+    <string name="settings_monthly_limit_placeholder">जैसे 40</string>
+    <string name="settings_save_monthly_limit">मासिक सीमा सहेजें</string>
+    <string name="settings_monthly_limit_saved">सहेजा गया: %1$s %2$s प्रति माह</string>
+    <string name="settings_monthly_limit_saved_none">कोई मासिक सीमा नहीं</string>
     <string name="settings_section_permissions">सिस्टम अनुमतियाँ</string>
     <string name="settings_usage_access_active">सटीक सिस्टम काउंटर सक्रिय</string>
     <string name="settings_usage_access_needed">सटीक दैनिक कुल के लिए ज़रूरी</string>
@@ -203,6 +229,9 @@
     <string name="settings_section_background">बैकग्राउंड में चलता रखें</string>
     <string name="settings_autostart_title">ऑटो स्टार्ट और बैटरी</string>
     <string name="settings_autostart_hint">कुछ ब्रांड बैकग्राउंड ऐप बंद कर देते हैं। मीटर को 24/7 चालू रखने के लिए दोनों की अनुमति दें।</string>
+    <string name="settings_pause_title">मीटर रोकें</string>
+    <string name="settings_pause_hint_running">चल रहा है। रोकने पर टिकर और सारी गिनती तब तक बंद रहती है जब तक आप फिर शुरू न करें — ऐप इसे खुद से दोबारा शुरू नहीं करता।</string>
+    <string name="settings_pause_hint_paused">आपने रोका है — कुछ भी मापा या गिना नहीं जा रहा। आज का सहेजा हुआ कुल बना रहेगा।</string>
     <string name="settings_autostart_button">ऑटोस्टार्ट</string>
     <string name="settings_battery_button">बैटरी</string>
     <string name="settings_section_data">डेटा प्रबंधन</string>
@@ -232,11 +261,12 @@
     <string name="settings_engine_title">लाइव, सीधे OS काउंटरों से</string>
     <string name="engine_status_running">चल रहा है</string>
     <string name="engine_status_paused">चल रहा है (रुका हुआ)</string>
+    <string name="engine_status_paused_by_user">आपके द्वारा रोका गया</string>
     <string name="engine_status_stopped">बंद</string>
     <string name="engine_row_status">स्थिति</string>
     <string name="engine_row_source">काउंटर स्रोत</string>
     <string name="engine_row_cadence">रीड अंतराल</string>
-    <string name="engine_row_cadence_value">500 ms · %1$d ms विंडो प्रकाशित</string>
+    <string name="engine_row_cadence_value">स्क्रीन चालू 500 ms · स्क्रीन बंद 2 s · %1$d ms विंडो</string>
     <string name="engine_row_samples">इस सत्र के सैंपल</string>
     <string name="engine_row_window">आख़िरी प्रकाशित विंडो</string>
     <string name="engine_row_network">नेटवर्क</string>
@@ -255,6 +285,7 @@
     <string name="tile_subtitle_today">आज %1$s</string>
     <string name="tile_subtitle_running">माप जारी है</string>
     <string name="tile_subtitle_paused">मीटर रुका हुआ है</string>
+    <string name="tile_subtitle_paused_by_user">आपने रोका है</string>
     <string name="widget_today">आज</string>
     <string name="widget_breakdown">मोबाइल %1$s · Wi-Fi %2$s</string>
     <string name="widget_updated">अपडेट %1$s</string>

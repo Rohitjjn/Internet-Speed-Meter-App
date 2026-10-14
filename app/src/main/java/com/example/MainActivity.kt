@@ -17,7 +17,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.lifecycleScope
 import com.example.data.PreferencesManager
+import com.example.services.MeterControl
 import com.example.services.ServiceScheduler
 import com.example.services.SpeedMeterService
 import com.example.ui.screens.IntroScreen
@@ -44,7 +46,8 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (!SpeedMeterService.isServiceRunning.value) {
-            SpeedMeterService.startService(applicationContext)
+            // "Paused by you" is the one state a resume must not override.
+            lifecycleScope.launch { MeterControl.startUnlessPaused(applicationContext) }
         }
     }
 
@@ -64,20 +67,23 @@ class MainActivity : ComponentActivity() {
 
             val isOnboardingCompleted by preferencesManager.isOnboardingCompletedFlow.collectAsState(initial = false)
             val accentKey by preferencesManager.accentKeyFlow.collectAsState(initial = "INK")
+            val reducedMotion by preferencesManager.reducedMotionFlow.collectAsState(initial = false)
             val scope = rememberCoroutineScope()
 
             MyApplicationTheme(
                 darkTheme = darkThemeActive,
-                accent = AccentTheme.fromKey(accentKey)
+                accent = AccentTheme.fromKey(accentKey),
+                reducedMotion = reducedMotion
             ) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     var currentStage by remember { mutableStateOf(AppStage.SPLASH) }
 
-                    // Start the meter as soon as the app is interactive.
+                    // Start the meter as soon as the app is interactive — unless the user
+                    // paused it (MeterControl keeps that decision in one place).
                     LaunchedEffect(currentStage) {
                         if (currentStage != AppStage.SPLASH) {
                             try {
-                                SpeedMeterService.startService(applicationContext)
+                                MeterControl.startUnlessPaused(applicationContext)
                             } catch (e: Exception) {
                                 e.printStackTrace()
                             }

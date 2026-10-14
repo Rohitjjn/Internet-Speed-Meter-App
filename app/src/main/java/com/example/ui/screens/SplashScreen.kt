@@ -33,16 +33,24 @@ import com.example.R
 import com.example.ui.components.AppBackground
 import com.example.ui.util.secondary
 import kotlinx.coroutines.delay
+import com.example.ui.theme.isReducedMotion
 import kotlinx.coroutines.launch
 
 @Composable
 fun SplashScreen(
     onSplashComplete: () -> Unit
 ) {
-    val scale = remember { Animatable(0.82f) }
-    val alpha = remember { Animatable(0f) }
+    val reducedMotion = isReducedMotion()
+    val scale = remember { Animatable(if (reducedMotion) 1f else 0.82f) }
+    val alpha = remember { Animatable(if (reducedMotion) 1f else 0f) }
 
-    LaunchedEffect(true) {
+    LaunchedEffect(reducedMotion) {
+        if (reducedMotion) {
+            // No zoom, no fade — the mark is shown briefly and the app gets on with it.
+            delay(500)
+            onSplashComplete()
+            return@LaunchedEffect
+        }
         launch {
             scale.animateTo(1.0f, tween(durationMillis = 900, easing = FastOutSlowInEasing))
         }

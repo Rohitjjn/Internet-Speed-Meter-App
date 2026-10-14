@@ -10,6 +10,7 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.AppDatabase
 import com.example.data.DataUsageRepository
+import com.example.services.MeterControl
 import com.example.services.SpeedMeterService
 import com.example.util.BytesFormatter
 import com.example.util.DateFormatter
@@ -25,8 +26,9 @@ import kotlinx.coroutines.withContext
  *
  * Honest by construction: the tile's state mirrors whether the meter is actually running,
  * and the subtitle (API 29+) is **today's persisted total** — a row the service wrote from
- * OS counters — or a dash while there is none. It never shows a live speed, because a
- * tile cannot follow one without keeping the process awake.
+ * OS counters — or a dash while there is none. A meter the user paused says "paused by
+ * you" (never "measuring"). It never shows a live speed, because a tile cannot follow one
+ * without keeping the process awake.
  */
 class SpeedMeterTile : TileService() {
 
@@ -48,8 +50,10 @@ class SpeedMeterTile : TileService() {
             } catch (e: Exception) {
                 null
             }
+            // A meter the user switched off is labelled as such — not as an OS pause.
+            val pausedByUser = !running && MeterControl.isPausedByUser(applicationContext)
             withContext(Dispatchers.Main) {
-                if (scope === listeningScope) renderTile(running = running, todayTotal = total)
+                if (scope === listeningScope) renderTile(running = running, todayTotal = total, pausedByUser = pausedByUser)
             }
         }
     }
@@ -86,11 +90,12 @@ class SpeedMeterTile : TileService() {
         }
     }
 
-    private fun renderTile(running: Boolean, todayTotal: Long?) {
+    private fun renderTile(running: Boolean, todayTotal: Long?, pausedByUser: Boolean = false) {
         val tile = qsTile ?: return
         tile.label = getString(R.string.tile_label)
         tile.state = if (running) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         val subtitle = when {
+            pausedByUser -> getString(R.string.tile_subtitle_paused_by_user)
             todayTotal != null -> getString(R.string.tile_subtitle_today, BytesFormatter.format(todayTotal))
             running -> getString(R.string.tile_subtitle_running)
             else -> getString(R.string.tile_subtitle_paused)

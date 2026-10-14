@@ -7,6 +7,7 @@ import com.example.data.AppDatabase
 import com.example.data.DataUsageRepository
 import com.example.data.PreferencesManager
 import com.example.data.UsageResetter
+import com.example.services.MeterControl
 import com.example.util.BytesFormatter
 import com.example.util.DateFormatter
 import kotlinx.coroutines.Dispatchers
@@ -49,7 +50,13 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val permissionGranted: StateFlow<Boolean> =
         com.example.services.SpeedMeterService.permissionGrantedFlow
 
+    /** The user's own pause switch (distinct from an OS-paused meter). */
+    val pausedByUser: StateFlow<Boolean> = MeterControl.pausedByUser
+
     init {
+        // Load the stored pause flag so the header button and hero label are right at once.
+        viewModelScope.launch { MeterControl.isPausedByUser(application) }
+
         // Follow today's row, rolling over automatically at midnight.
         viewModelScope.launch {
             var currentCollectedDate: String? = null
@@ -110,6 +117,14 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 _limitProgress.value = progress?.coerceIn(0.0, 1.0)
                 _mobileLimitLabel.value = label
             }
+        }
+    }
+
+    /** Pause (stop + remember) or resume the meter on the user's request. */
+    fun setMeterPaused(paused: Boolean) {
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            if (paused) MeterControl.pause(app) else MeterControl.resume(app)
         }
     }
 

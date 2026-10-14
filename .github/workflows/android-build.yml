@@ -5,6 +5,11 @@ name: Android Build & Release
 #    API-readable "Unit test log" / "Lint log" check run on the commit;
 #  * "Run workflow" (manual dispatch) additionally builds the APK and (optionally)
 #    uploads it to a GitHub release — those inputs are required for the build job.
+#
+# Signing: every APK (debug or release) is signed with ONE stable certificate — the
+# KEYSTORE_BASE64 secret when it exists, otherwise the committed keystore/ci-shared.p12 —
+# so a newer build always installs *over* the previous one. A throwaway per-run key would
+# make Android refuse the update ("package conflicts with an existing package").
 
 on:
   push:
@@ -29,10 +34,10 @@ on:
         required: true
         default: "1.0.0"
       version_code:
-        description: "Version code (integer, e.g. 2)"
+        description: "Version code (integer; blank = this workflow's run number, which only ever grows, so updates never look like downgrades)"
         type: string
-        required: true
-        default: "1"
+        required: false
+        default: ""
       tag:
         description: "Release tag (blank = v<version_name>)"
         type: string
@@ -102,6 +107,11 @@ jobs:
           yes | "$CMD" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
       - uses: gradle/actions/setup-gradle@v5
+
+      # The check-run publisher checks its own parsers first (offline, < 1 s): a broken
+      # script would otherwise publish an empty "Unit test log" and hide a real failure.
+      - name: Self-test the check publisher
+        run: python3 .github/scripts/publish_check.py --self-test
 
       - name: Run unit tests
         id: tests
@@ -240,26 +250,39 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v5
 
-      # Release builds are always signed: either with the repo's upload key
-      # (KEYSTORE_BASE64 secret, base64 of a .jks) or a throwaway key when
-      # the secret is missing (so the workflow never dead-ends).
-      - name: Prepare release keystore
-        if: inputs.build_type == 'release'
+      # One stable signing certificate for every build. With the KEYSTORE_BASE64 secret
+      # (base64 of a .jks/.p12) that key is used — together with STORE_PASSWORD /
+      # KEY_ALIAS / KEY_PASSWORD; without it the committed keystore/ci-shared.p12
+      # (alias "upload", password "android") signs the APK, exactly like a local build.
+      # Switching between the two changes the certificate, which costs one uninstall.
+      - name: Prepare signing key
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEY_ALIAS_INPUT: ${{ secrets.KEY_ALIAS }}
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > my-upload-key.jks
-            echo "Using the uploaded keystore."
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload-key.jks"
+            echo "KEYSTORE_PATH=$RUNNER_TEMP/upload-key.jks" >> "$GITHUB_ENV"
+            echo "Signing with the KEYSTORE_BASE64 secret."
+            echo "🔏 Signed with the **KEYSTORE_BASE64** secret." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "::warning::No KEYSTORE_BASE64 secret found - generating a throwaway self-signed keystore for this build."
-            keytool -genkeypair -storetype JKS -keystore my-upload-key.jks \
-              -storepass android -keypass android \
-              -alias "${KEY_ALIAS_INPUT:-upload}" \
-              -keyalg RSA -keysize 2048 -validity 10950 \
-              -dname "CN=SpeedMeter CI, OU=Mobile, O=SpeedMeter, L=Jaipur, ST=Rajasthan, C=IN"
+            echo "::notice::No KEYSTORE_BASE64 secret - signing with the committed shared key keystore/ci-shared.p12 (stable across runs, so updates install in place)."
+            echo "🔏 Signed with the committed shared key \`keystore/ci-shared.p12\`." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Resolve version
+        id: version
+        run: |
+          CODE="${{ inputs.version_code }}"
+          if [ -z "$CODE" ]; then
+            CODE="${{ github.run_number }}"
+            echo "No version_code given - using the run number $CODE."
+          fi
+          if ! [[ "$CODE" =~ ^[0-9]+$ ]]; then
+            echo "::error::version_code must be a positive integer, got '$CODE'"
+            exit 1
+          fi
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "📦 Version **${{ inputs.version_name }}** (code $CODE)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build APK
         env:
@@ -270,11 +293,11 @@ jobs:
           if [ "${{ inputs.build_type }}" = "release" ]; then
             ./gradlew :app:assembleRelease --stacktrace \
               -PversionName="${{ inputs.version_name }}" \
-              -PversionCode="${{ inputs.version_code }}"
+              -PversionCode="${{ steps.version.outputs.code }}"
           else
             ./gradlew :app:assembleDebug --stacktrace \
               -PversionName="${{ inputs.version_name }}" \
-              -PversionCode="${{ inputs.version_code }}"
+              -PversionCode="${{ steps.version.outputs.code }}"
           fi
 
       - name: Collect artifacts
@@ -289,6 +312,25 @@ jobs:
             cp app/build/outputs/apk/debug/app-debug.apk "dist/speed-meter-v${{ inputs.version_name }}-debug.apk"
           fi
           ls -la dist
+
+      # The certificate digest goes into the job summary, so a "conflicts with an existing
+      # package" report can be checked against the key that signed the installed build.
+      - name: Verify APK signature
+        run: |
+          APK="$(ls dist/*.apk | head -n 1)"
+          APKSIGNER="$(ls -d "$ANDROID_SDK_ROOT"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -n 1)"
+          if [ -z "$APKSIGNER" ]; then
+            echo "apksigner not found - skipping the signature report"
+            exit 0
+          fi
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee apksigner.txt
+          {
+            echo "### Signing certificate of $(basename "$APK")"
+            echo '```'
+            grep -E "Verified using|Signer #1 certificate (DN|SHA-256)" apksigner.txt || cat apksigner.txt
+            echo '```'
+            echo "Android installs an update in place only when this certificate matches the installed app's."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v5
@@ -309,6 +351,6 @@ jobs:
             dist/*.apk
           fail_on_unmatched_files: true
           # Re-running with the same tag replaces the APK asset in place.
-          overwrite: true
+          overwrite_files: true
         env:
           GITHUB_TOKEN: ${{ github.token }}

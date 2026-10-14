@@ -69,6 +69,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -84,9 +85,13 @@ import com.example.services.SpeedTestServers
 import com.example.ui.components.AppBackground
 import com.example.ui.components.AppIcon
 import com.example.ui.components.GlassCard
+import com.example.ui.theme.AccentTheme
 import com.example.ui.theme.AccentViolet
 import com.example.ui.theme.AccentVioletDark
 import com.example.ui.theme.AccentWarning
+import com.example.ui.theme.DarkPrimary
+import com.example.ui.theme.LightPrimary
+import com.example.ui.theme.dynamicPrimary
 import com.example.ui.theme.LiveGreen
 import com.example.ui.theme.LiveGreenDark
 import com.example.ui.theme.SpeedDown
@@ -113,6 +118,8 @@ fun SettingsScreen(
 
     val storedMobileLimit by viewModel.mobileLimit.collectAsState()
     val storedMobileLimitUnit by viewModel.mobileLimitUnit.collectAsState()
+    val storedMonthlyLimit by viewModel.monthlyLimit.collectAsState()
+    val storedMonthlyLimitUnit by viewModel.monthlyLimitUnit.collectAsState()
     val isDark by viewModel.isDarkMode.collectAsState()
     val darkThemeActive = isDark ?: isSystemInDarkTheme()
     val speedUnit by viewModel.speedUnit.collectAsState()
@@ -120,6 +127,11 @@ fun SettingsScreen(
     val liveSpeed by SpeedMeterService.liveSpeedFlow.collectAsState()
     val engineStatus by SpeedMeterService.engineStatusFlow.collectAsState()
     val serviceRunning by SpeedMeterService.isServiceRunning.collectAsState()
+    val meterPausedByUser by viewModel.meterPausedByUser.collectAsState()
+    val reducedMotion by viewModel.reducedMotion.collectAsState()
+    // TalkBack reads the switch's state as "paused by you" / "running", not just "on/off".
+    val pausedStateText = stringResource(R.string.engine_status_paused_by_user)
+    val runningStateText = stringResource(R.string.engine_status_running)
     // Collected (not read once with `.value`), otherwise this row never refreshes.
     val networkType by SpeedMeterService.networkTypeFlow.collectAsState()
     // The endpoint choice is read straight from the store: what is highlighted is what is
@@ -131,6 +143,9 @@ fun SettingsScreen(
     var mobileLimitText by remember { mutableStateOf("") }
     var mobileLimitUnit by remember { mutableStateOf("GB") }
     var isLimitInitialized by remember { mutableStateOf(false) }
+    var monthlyLimitText by remember { mutableStateOf("") }
+    var monthlyLimitUnit by remember { mutableStateOf("GB") }
+    var isMonthlyLimitInitialized by remember { mutableStateOf(false) }
 
     // Only the custom URL needs a draft (typing is incremental); it is seeded once from
     // the stored value and saved with an explicit tap.
@@ -152,6 +167,15 @@ fun SettingsScreen(
             mobileLimitText = if (limit % 1.0 == 0.0) limit.toInt().toString() else limit.toString()
             mobileLimitUnit = storedMobileLimitUnit
             isLimitInitialized = true
+        }
+    }
+
+    LaunchedEffect(storedMonthlyLimit, storedMonthlyLimitUnit) {
+        val limit = storedMonthlyLimit
+        if (limit != null && !isMonthlyLimitInitialized) {
+            monthlyLimitText = if (limit % 1.0 == 0.0) limit.toInt().toString() else limit.toString()
+            monthlyLimitUnit = storedMonthlyLimitUnit
+            isMonthlyLimitInitialized = true
         }
     }
 
@@ -336,6 +360,40 @@ fun SettingsScreen(
                             onSelected = { viewModel.updateAccent(it) }
                         )
                     }
+
+                    HorizontalDivider(color = glassBorder.copy(alpha = 0.5f))
+
+                    // ---- reduced motion ----
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.settings_reduced_motion),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Text(
+                                text = stringResource(R.string.settings_reduced_motion_hint),
+                                fontSize = 11.sp,
+                                color = secondary()
+                            )
+                        }
+                        Switch(
+                            checked = reducedMotion,
+                            onCheckedChange = { viewModel.setReducedMotion(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                uncheckedThumbColor = MaterialTheme.colorScheme.primary,
+                                uncheckedTrackColor = glassColor
+                            ),
+                            modifier = Modifier.testTag("reduced_motion_switch")
+                        )
+                    }
                 }
             }
 
@@ -432,6 +490,97 @@ fun SettingsScreen(
                         color = secondary(),
                         modifier = Modifier.testTag("saved_limit_label")
                     )
+
+                    HorizontalDivider(color = glassBorder.copy(alpha = 0.5f))
+
+                    // ---- optional monthly limit (same warn-only rule, per calendar month) ----
+                    Text(
+                        text = stringResource(R.string.settings_monthly_limit_title),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = stringResource(R.string.settings_monthly_limit_hint),
+                        fontSize = 11.sp,
+                        color = secondary()
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = monthlyLimitText,
+                            onValueChange = { newVal ->
+                                if (newVal.all { it.isDigit() || it == '.' }) {
+                                    monthlyLimitText = newVal
+                                }
+                            },
+                            placeholder = { Text(stringResource(R.string.settings_monthly_limit_placeholder)) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = glassBorder,
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("monthly_limit_input")
+                        )
+                        SegmentedControl(
+                            selectedValue = monthlyLimitUnit,
+                            options = listOf("MB", "GB"),
+                            onSelected = { unit -> monthlyLimitUnit = unit },
+                            modifier = Modifier.testTag("monthly_unit_segmented")
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            viewModel.updateMonthlyLimit(
+                                monthlyLimitText.toDoubleOrNull() ?: 0.0,
+                                monthlyLimitUnit
+                            )
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .testTag("save_monthly_limit_button"),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                            contentColor = MaterialTheme.colorScheme.onBackground
+                        ),
+                        border = BorderStroke(1.dp, glassBorder),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        AppIcon(
+                            resId = R.drawable.ic_save,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(R.string.settings_save_monthly_limit), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                    val savedMonthly = storedMonthlyLimit
+                    Text(
+                        text = if (savedMonthly == null || savedMonthly <= 0.0) {
+                            stringResource(R.string.settings_monthly_limit_saved_none)
+                        } else {
+                            stringResource(
+                                R.string.settings_monthly_limit_saved,
+                                if (savedMonthly % 1.0 == 0.0) savedMonthly.toInt().toString() else savedMonthly.toString(),
+                                storedMonthlyLimitUnit
+                            )
+                        },
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        color = secondary(),
+                        modifier = Modifier.testTag("saved_monthly_limit_label")
+                    )
                 }
             }
 
@@ -497,6 +646,70 @@ fun SettingsScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    // ---- the user's own pause switch ----
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(
+                                        (if (meterPausedByUser) AccentWarning else LiveGreen).copy(alpha = 0.1f)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                AppIcon(
+                                    resId = if (meterPausedByUser) R.drawable.ic_play else R.drawable.ic_pause,
+                                    contentDescription = null,
+                                    tint = if (meterPausedByUser) AccentWarning else LiveGreen,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
+                            Column {
+                                Text(
+                                    text = stringResource(R.string.settings_pause_title),
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                                Text(
+                                    text = if (meterPausedByUser) {
+                                        stringResource(R.string.settings_pause_hint_paused)
+                                    } else {
+                                        stringResource(R.string.settings_pause_hint_running)
+                                    },
+                                    fontSize = 11.sp,
+                                    color = secondary()
+                                )
+                            }
+                        }
+                        Switch(
+                            checked = meterPausedByUser,
+                            onCheckedChange = { viewModel.setMeterPaused(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = AccentWarning,
+                                uncheckedThumbColor = MaterialTheme.colorScheme.primary,
+                                uncheckedTrackColor = glassColor
+                            ),
+                            modifier = Modifier
+                                .semantics {
+                                    stateDescription = if (meterPausedByUser) pausedStateText else runningStateText
+                                }
+                                .testTag("meter_pause_switch")
+                        )
+                    }
+
+                    HorizontalDivider(color = glassBorder.copy(alpha = 0.5f))
+
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -775,6 +988,7 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     val statusText = when {
+                        !serviceRunning && meterPausedByUser -> stringResource(R.string.engine_status_paused_by_user)
                         !serviceRunning -> stringResource(R.string.engine_status_stopped)
                         liveSpeed.paused -> stringResource(R.string.engine_status_paused)
                         else -> stringResource(R.string.engine_status_running)
@@ -1052,16 +1266,23 @@ private fun ServerOptionRow(
 
 @Composable
 private fun AccentPicker(selected: String, onSelected: (String) -> Unit) {
-    val accents = listOf(
-        "INK" to MaterialTheme.colorScheme.primary,
-        "GREEN" to (if (isDarkModeActive()) SpeedDownDark else SpeedDown),
-        "BLUE" to (if (isDarkModeActive()) SpeedUpDark else SpeedUp),
-        "VIOLET" to (if (isDarkModeActive()) AccentVioletDark else AccentViolet)
-    )
+    val isDark = isDarkModeActive()
+    // "INK" is the app's own primary; the swatch must not follow the *current* accent.
+    val inkPrimary = if (isDark) DarkPrimary else LightPrimary
+    // Material You swatch — only where the OS can supply a wallpaper colour (API 31+).
+    val wallpaperPrimary = dynamicPrimary(isDark)?.first
+    val accents = buildList {
+        add("INK" to inkPrimary)
+        add("GREEN" to (if (isDark) SpeedDownDark else SpeedDown))
+        add("BLUE" to (if (isDark) SpeedUpDark else SpeedUp))
+        add("VIOLET" to (if (isDark) AccentVioletDark else AccentViolet))
+        if (wallpaperPrimary != null) add(AccentTheme.SYSTEM.key to wallpaperPrimary)
+    }
+    val systemLabel = stringResource(R.string.a11y_accent_system)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         accents.forEach { (key, color) ->
             val isSelected = key == selected
-            val description = stringResource(R.string.a11y_accent, key)
+            val description = if (key == AccentTheme.SYSTEM.key) systemLabel else stringResource(R.string.a11y_accent, key)
             Box(
                 modifier = Modifier
                     .size(if (isSelected) 30.dp else 26.dp)

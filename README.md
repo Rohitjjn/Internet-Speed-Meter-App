@@ -20,11 +20,13 @@ Two independent engines, both reporting **real measurements only**:
 ### 1. Passive live meter (always on)
 
 `services/SpeedMeterService.kt` runs a foreground service whose read loop samples the
-device counters **twice per second** and publishes **once per second**:
+device counters **twice per second** while the screen is on (every **2 s** while it is
+off — nobody can see the ticker then, and the maths divides by the measured window, so
+only the battery cost changes) and publishes **once per second**:
 
 | Step | What happens |
 |---|---|
-| read (500 ms) | `TrafficStats.getTotalRxBytes()/getTotalTxBytes()` — or `/proc/net/dev` when a ROM restricts them |
+| read (500 ms on-screen / 2 s screen-off) | `TrafficStats.getTotalRxBytes()/getTotalTxBytes()` — or `/proc/net/dev` when a ROM restricts them |
 | maths | `SpeedEngine` (pure Kotlin, fully unit-tested) turns the `(rx, tx)` deltas into bytes/second |
 | publish (~1 s) | `LiveSpeed` → dashboard, notification, diagnostics panel |
 
@@ -63,7 +65,14 @@ for real over the network (plain `HttpURLConnection`, no third-party SDK):
   never throttled by request setup, while a slow link keeps spending small bodies.
 - **Upload** — the server first has to **acknowledge** a fixed 32 KiB POST with a 2xx/3xx
   (an endpoint that only discards bytes, or a captive portal, fails the phase instead of
-  producing a fantasy number); then 3 parallel chunked POST streams for 6 s.
+  producing a fantasy number); then 3 parallel chunked POST streams for 6 s. At the
+  deadline each stream ends its body and waits (≤ 3 s) for the server's response — the
+  proof that everything, including what the kernel's **send buffer** still held, has
+  arrived. When every stream is answered the window closes at the **last
+  acknowledgement**, so buffered bytes are timed until they really landed instead of being
+  counted as "sent by the deadline" (the correction matters most on slow uplinks). If a
+  stream stays silent the phase falls back to the send-side window and the result card
+  says so ("Upload window: send-side").
 - Result = `bits × 8 ÷ seconds`, shown in **Mbps** (the unit ISPs advertise), with the
   last 20 results kept on-device. The divisor is the window that *actually carried data*:
   a short **grace period** (1.5 s download / 1 s upload — TCP slow start and connection
@@ -102,8 +111,12 @@ Every rule above is unit-tested with a fake connectivity probe and a fake runner
 Settings → **Measurement Engine** (collapsed by default, with a one-line status) shows the
 engine's raw inputs: active counter source, read cadence, last window, session samples,
 and the kernel interface totals (`wlan0`, `rmnet_data0`, …). Nothing in that panel is
-estimated. History → **share** exports the stored days as CSV (raw bytes, no rounding),
-through the system share sheet — no file, no storage permission.
+estimated. History → **share** exports the stored days as a real `.csv` attachment (raw
+bytes, no rounding) through the system share sheet, and the speed-test history has its
+own **EXPORT** (bytes/s *and* Mbps, UTC timestamps). Both files are written to the app's
+private cache and handed over through a `FileProvider` — no storage permission. Tapping a
+day in History opens its drill-down: download and upload per network, straight from the
+four stored counters.
 
 > Note on `NetworkStatsManager`: on API ≤ 28 the mobile query runs with a `null`
 > subscriber id (the app deliberately has no `READ_PHONE_STATE`) and a few ROMs answer `0`
@@ -130,6 +143,15 @@ that a tap resumes the meter (a notification tap, like opening the app, *is* all
 the service). The notification is cleared automatically the moment the meter is running
 again, and opening the app re-starts the meter on every resume.
 
+**Pausing it yourself is a different state.** The pause button in the dashboard header
+(and the *Pause meter* switch in Settings) stops the service and stores
+`meter_paused_by_user`; `services/MeterControl.kt` is the single place every restart path
+asks — `MainActivity.onResume`, the boot receiver, the watchdog worker, the timeout retry,
+even a stale sticky restart — so a meter you paused stays paused across reboots until you
+resume it. The UI then says **"paused by you"** (hero label, Settings engine status, Quick
+Settings tile), nothing is measured or counted, no "meter paused" notice is posted, and
+today's saved total stays visible.
+
 ### Home-screen widget
 
 **Today's usage** (2×1, resizable) shows today's real total with the mobile / Wi-Fi split
@@ -143,8 +165,8 @@ update period re-renders it too. Tapping it opens the app.
 **Speed Meter** can be added to the notification shade. It is a launcher, not a live
 meter: its state mirrors whether the meter is running and its subtitle (Android 10+) is
 today's **persisted** total — the row the service wrote from OS counters — or "Meter
-paused". It never shows a speed, because a tile cannot follow one without keeping the
-process awake.
+paused" / "Paused by you". It never shows a speed, because a tile cannot follow one without
+keeping the process awake.
 
 ---
 
@@ -157,18 +179,23 @@ process awake.
 - 👥 Per-network split: real bytes attributed to Wi-Fi vs mobile while they happen
 - 📊 Session total, session peak, 1-minute average and 30-second sparkline
 - 📱 Mobile & Wi-Fi daily usage cards (real counters)
-- 🗓 History (all recorded days, newest first) + pinned monthly total, CSV export via the
-  share sheet, clear option; two-column on tablets / landscape
+- 🗓 History (all recorded days, newest first) with a per-day drill-down (↓/↑ per
+  network) + pinned monthly total, `.csv` export via the share sheet, clear option;
+  two-column on tablets / landscape
 - 🏠 Home-screen widget with today's real total (mobile / Wi-Fi split) + Quick Settings tile
-- 🎚 Optional daily mobile **warning** limit (MB/GB) — alerts at 50 % / 90 % / 100 %
-  with a buzz; the app never blocks data
-- 🌗 Glassy light + dark theme (GPT-style glassmorphism) + accent picker
+- ⏯ **Pause / resume the meter yourself** — a durable switch no restart path overrides;
+  the UI always says whether a pause is yours or the OS's
+- 🎚 Optional daily **and monthly** mobile **warning** limits (MB/GB) — one alert each at
+  50 % / 90 % / 100 % with a buzz; the app never blocks data
+- 🌗 Glassy light + dark theme (GPT-style glassmorphism) + accent picker, including a
+  **wallpaper (Material You) accent** on Android 12+, and a **reduce motion** switch
 - 🔔 Status-bar notification with live speed + custom speed glyph icon
 - 🌐 Fully localizable: **every** user-facing string lives in `values/strings.xml` with a
-  Hindi counterpart in `values-hi/` (236 keys, parity enforced by `StringResourceParityTest`)
+  Hindi counterpart in `values-hi/` (267 keys, parity enforced by `StringResourceParityTest`)
 - ♿ Accessibility: content descriptions on the live numbers, the gauge and every icon
-  button; polite live regions for phase/status changes; selection semantics on pickers;
-  no text below 10 sp; one haptic tick when a test result lands
+  button; polite live regions for phase/status changes; selection and state semantics on
+  pickers and switches ("paused by you" / "running", expanded / collapsed); no text below
+  10 sp; one haptic tick when a test result lands
 - 🧾 Privacy: no `ACCESS_WIFI_STATE` / `READ_PHONE_STATE`; `INTERNET` exists **only**
   for the manual speed test, no analytics, no accounts, everything on-device
 
@@ -238,28 +265,43 @@ On a device (network-gated, skips without a connection):
 |---|---|
 | `build_type` | `release` (signed, minified) or `debug` |
 | `version_name` | e.g. `1.1.0` |
-| `version_code` | integer, e.g. `2` |
+| `version_code` | integer, e.g. `2`; **blank → the workflow run number**, so every later build is an update of the previous one |
 | `tag` | release tag (blank → `v<version_name>`) |
 | `release_title` | blank → `v<version_name>` |
 | `release_notes` | Markdown body for the release |
 | `create_release` | `yes` → create/update the GitHub release with the APK |
 
-The manual run executes the unit tests, builds the APK, uploads it as a build
-artifact **and** (optionally) to a GitHub Release. Re-running with the same
-tag **overwrites** the APK asset in place.
+The manual run executes the unit tests, builds the APK, verifies its signature
+(`apksigner`, printed in the job summary), uploads it as a build artifact **and**
+(optionally) to a GitHub Release. Re-running with the same tag **overwrites** the APK
+asset in place.
 
-### Release signing
+### Signing & installing updates
 
-Two options:
+Android only installs an APK **over** an existing one when both carry the same signing
+certificate. Every CI build — `debug` and `release`, from any branch — is therefore signed
+with **one stable key**, in this order of precedence:
 
-1. **Upload your key** (recommended): add these *repository secrets*
-   - `KEYSTORE_BASE64` — base64 of your `.jks` file
-     (`base64 -w0 my-upload-key.jks`)
-   - `STORE_PASSWORD`, `KEY_ALIAS` (default `upload`), `KEY_PASSWORD`
-2. **Throwaway key**: if `KEYSTORE_BASE64` is missing, CI generates a
-   self-signed key for that build (so the workflow never dead-ends). Note
-   each throwaway key is different — apps signed with it won't update each
-   other.
+1. `KEYSTORE_PATH` / `KEYSTORE_BASE64` — your own key (see below);
+2. `my-upload-key.jks` in the repository root (ignored by Git, for local builds);
+3. **`keystore/ci-shared.p12`**, a self-signed key committed to the repository
+   (alias `upload`, store and key password `android`; SHA-256
+   `75:87:DA:90:08:98:65:F6:CF:E3:A8:51:D8:88:04:BB:6F:05:10:97:A3:3E:DB:03:27:76:AA:7C:43:77:2E:26`).
+
+So a build downloaded from Actions or from a Release **updates** the previous one in place
+— history, settings and today's totals survive. Two things to know:
+
+- **One-time uninstall.** Builds made *before* this change were signed with a throwaway
+  key (a fresh one per run — that is why "App not installed as package conflicts with an
+  existing package" appeared). Export your history first (History → share), uninstall the
+  old build once, install the new one; from then on every build updates in place.
+- **The committed key is a convenience, not a secret.** Anyone can sign an APK with it, so
+  treat it as a developer/CI key: it is fine for side-loaded builds you download yourself,
+  not for a store listing. To switch to a private key, add the repository secrets
+  `KEYSTORE_BASE64` (`base64 -w0 my-upload-key.jks`), `STORE_PASSWORD`, `KEY_ALIAS`
+  (default `upload`) and `KEY_PASSWORD`; that switch costs one more uninstall, after which
+  the private key is the stable one. The **Prepare signing key** step in every build prints
+  which key was used.
 
 ---
 
@@ -274,16 +316,21 @@ app/src/main/java/com/example/
 │   ├── DataUsageEntity.kt     # mobile/wifi rx+tx per day
 │   ├── DataUsageRepository.kt
 │   ├── NetworkStatsHelper.kt  # per-transport counters since midnight
-│   ├── PreferencesManager.kt  # DataStore: theme, accent, unit, limit, baselines,
-│   │                          #   last speed, speed-test results
+│   ├── PreferencesManager.kt  # DataStore: theme, accent, reduced motion, unit, daily +
+│   │                          #   monthly limits, baselines, last speed, speed-test results,
+│   │                          #   meter_paused_by_user
 │   └── UsageResetter.kt       # single reset path (service path uses its own)
 ├── services/
-│   ├── SpeedMeterService.kt   # 500 ms read loop + 15 s accounting + notification + widget push,
-│   │                          #   "meter paused" notice when a foreground start is refused
+│   ├── SpeedMeterService.kt   # 500 ms read loop (2 s screen-off) + 15 s accounting +
+│   │                          #   notification + widget push, "meter paused" notice when a
+│   │                          #   foreground start is refused
+│   ├── MeterControl.kt        # the user's pause switch — every restart path asks it first
+│   ├── NotificationText.kt    # pure builder of the ticker's two lines (unit-tested)
 │   ├── SpeedEngine.kt         # pure measurement maths (unit-tested, no Android)
 │   ├── SourceHealth.kt        # pure source-switch rule (TrafficStats ⇄ /proc/net/dev)
 │   ├── TrafficCounterReader.kt# TrafficStats / /proc/net/dev + per-interface parser
-│   ├── SpeedTestEngine.kt     # ping/download/upload measurement, grace window, upload ack,
+│   ├── SpeedTestEngine.kt     # ping/download/upload measurement, grace window, upload ack
+│   │                          #   + acknowledged upload window (send-buffer correction),
 │   │                          #   abort signal + socket sentinel, SpeedTestRunner interface
 │   ├── TestServer.kt          # endpoint profiles (Cloudflare/LibreSpeed/custom) + cost
 │   ├── NetworkMonitor.kt      # Connectivity (transport / metered / Data Saver) + pushed
@@ -296,7 +343,10 @@ app/src/main/java/com/example/
 │   └── SpeedMeterTile.kt      # Quick Settings tile (state = meter running, subtitle = today)
 ├── util/
 │   ├── Formatting.kt          # SpeedFormatter / BytesFormatter / DateFormatter / DeltaMath
-│   └── UsageCsv.kt            # pure CSV builder for the History export
+│   ├── LimitAlerts.kt         # pure warn-only limit rule (daily + monthly)
+│   ├── UsageCsv.kt            # pure CSV builder for the History export
+│   ├── SpeedTestCsv.kt        # pure CSV builder for the speed-test history export
+│   └── CsvExport.kt           # FileProvider share of a .csv (text fallback)
 └── ui/
     ├── components/            # AppBackground, GlassCard, GlassChip, AppIcon
     ├── screens/               # Dashboard, Speed Test, History, Settings, Intro, Splash

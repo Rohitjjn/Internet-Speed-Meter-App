@@ -74,7 +74,12 @@ data class SpeedTestState(
     /** The most recent stored result at the moment this run started (ghost needle, "vs last"). */
     val previousResult: SpeedTestResult? = null,
     /** HTTP status the server acknowledged the upload verification with (0 = none yet). */
-    val uploadAckCode: Int = 0
+    val uploadAckCode: Int = 0,
+    /**
+     * True when the upload number was timed to the server's acknowledgements (every stream
+     * answered), i.e. the send-buffer correction applied; false = send-side window.
+     */
+    val uploadAcknowledgedWindow: Boolean = false
 ) {
     val isRunning: Boolean
         get() = phase == SpeedTestPhase.PING ||
@@ -326,6 +331,7 @@ class SpeedTestViewModel(
                 server = server.host,
                 usedFallback = usedFallback,
                 uploadAckCode = 0,
+                uploadAcknowledgedWindow = false,
                 error = null
             )
         }
@@ -383,6 +389,7 @@ class SpeedTestViewModel(
                 liveBitsPerSecond = 0.0,
                 uploadBitsPerSecond = upload?.bitsPerSecond,
                 uploadAckCode = upload?.serverAckCode ?: 0,
+                uploadAcknowledgedWindow = upload?.acknowledgedWindow ?: false,
                 finishedAtMillis = System.currentTimeMillis()
             )
         }

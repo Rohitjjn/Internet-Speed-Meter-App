@@ -10,6 +10,8 @@ Usage (inside GitHub Actions):
   publish_check.py --name "Lint log" --log gradle-lint.log \
       --lint app/build/reports/lint-results-release.xml --outcome success|failure --neutral
 
+  publish_check.py --self-test        # offline parser check, no token needed
+
 Only the standard library is used. Never fails the job: publishing problems are printed
 and swallowed so a broken token can never mask a real build result.
 """
@@ -290,16 +292,87 @@ def post_check_run(name, title, summary, text, conclusion):
         print(f"publish_check: {e}")
 
 
+def self_test():
+    """
+    Offline check of the three parsers against embedded samples (no token, no network).
+    Run by the workflow before Gradle so a regression in this script is caught by the
+    script itself instead of silently producing an empty check run.
+    """
+    import tempfile
+
+    sample_log = "\n".join([
+        "e: file:///home/runner/work/app/src/main/java/com/example/A.kt:12:5 Unresolved reference: foo",
+        "w: file:///home/runner/work/app/src/main/java/com/example/B.kt:3:1 Unused variable",
+        "com.example.SpeedEngineTest > downloadAndUploadAreNeverMirrored FAILED",
+        "99 tests completed, 1 failed, 2 skipped",
+        "Execution failed for task ':app:testDebugUnitTest'.",
+        "* What went wrong:",
+        "There were failing tests.",
+        "* Try:",
+    ])
+    errors, warnings, failed_tests, totals, task_failures, went_wrong = parse_gradle_log(sample_log)
+    assert len(errors) == 1 and errors[0][1] == 12 and errors[0][2] == 5, errors
+    assert errors[0][0].endswith("app/src/main/java/com/example/A.kt"), errors
+    assert len(warnings) == 1, warnings
+    assert failed_tests == ["com.example.SpeedEngineTest > downloadAndUploadAreNeverMirrored"], failed_tests
+    assert totals == ["99 tests completed, 1 failed, 2 skipped"], totals
+    assert task_failures == [":app:testDebugUnitTest"], task_failures
+    assert went_wrong[:2] == ["* What went wrong:", "There were failing tests."], went_wrong
+
+    with tempfile.TemporaryDirectory() as tmp:
+        junit = Path(tmp) / "TEST-com.example.SpeedEngineTest.xml"
+        junit.write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<testsuite name="com.example.SpeedEngineTest" tests="2" failures="1" errors="0" skipped="0">'
+            '<testcase name="ok" classname="com.example.SpeedEngineTest"/>'
+            '<testcase name="bad" classname="com.example.SpeedEngineTest">'
+            '<failure message="expected:&lt;1&gt; but was:&lt;2&gt;">java.lang.AssertionError: expected:&lt;1&gt; but was:&lt;2&gt;\n'
+            "\tat org.junit.Assert.fail(Assert.java:89)\n"
+            "\tat com.example.SpeedEngineTest.bad(SpeedEngineTest.kt:42)\n</failure>"
+            "</testcase></testsuite>",
+            encoding="utf-8",
+        )
+        suites, failures = parse_junit(tmp)
+        assert suites == [("com.example.SpeedEngineTest", 2, 1, 0)], suites
+        assert len(failures) == 1 and failures[0][1] == "bad", failures
+        assert "expected:<1> but was:<2>" in failures[0][2], failures
+        assert any("SpeedEngineTest.kt:42" in frame for frame in failures[0][3]), failures
+
+        lint = Path(tmp) / "lint-results-release.xml"
+        lint.write_text(
+            '<?xml version="1.0" encoding="UTF-8"?><issues format="6">'
+            '<issue id="NewApi" severity="Error" message="Call requires API 26">'
+            '<location file="/home/runner/work/app/src/main/java/com/example/C.kt" line="7"/></issue>'
+            '<issue id="UnusedResources" severity="Warning" message="Unused">'
+            '<location file="/home/runner/work/app/src/main/res/values/strings.xml" line="99"/></issue>'
+            "</issues>",
+            encoding="utf-8",
+        )
+        issues = parse_lint(str(lint))
+        assert [i[0] for i in issues] == ["Error", "Warning"], issues
+        assert issues[0][1] == "NewApi" and issues[0][4] == "7", issues
+
+    print("publish_check self-test: OK")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--name", required=True)
-    parser.add_argument("--log", required=True)
+    parser.add_argument("--self-test", action="store_true",
+                        help="verify the log/JUnit/lint parsers against embedded samples and exit")
+    parser.add_argument("--name", default="")
+    parser.add_argument("--log", default="")
     parser.add_argument("--results", default="")
     parser.add_argument("--lint", default="")
     parser.add_argument("--outcome", default="failure")
     parser.add_argument("--neutral", action="store_true",
                         help="report 'neutral' instead of 'failure' (informational jobs)")
     args = parser.parse_args()
+
+    if args.self_test:
+        return self_test()
+    if not args.name or not args.log:
+        parser.error("--name and --log are required (or use --self-test)")
 
     title, summary, text, errors, failures = build_report(args)
     annotate(errors, failures)

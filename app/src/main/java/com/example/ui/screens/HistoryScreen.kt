@@ -1,7 +1,15 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -29,15 +38,20 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -48,6 +62,7 @@ import com.example.data.DataUsageEntity
 import com.example.ui.components.AppBackground
 import com.example.ui.components.AppIcon
 import com.example.ui.components.GlassCard
+import com.example.ui.theme.AccentWarning
 import com.example.ui.theme.LiveGreen
 import com.example.ui.theme.LiveGreenDark
 import com.example.ui.theme.glassBorder
@@ -56,8 +71,10 @@ import com.example.ui.theme.isDarkModeActive
 import com.example.ui.util.secondary
 import com.example.ui.viewmodel.HistoryViewModel
 import com.example.util.BytesFormatter
+import com.example.util.CsvExport
 import com.example.util.DateFormatter
 import com.example.util.DeltaMath
+import com.example.util.LimitAlerts
 import com.example.util.UsageCsv
 import java.util.Locale
 
@@ -72,6 +89,9 @@ fun HistoryScreen(
     val monthlyTotalBytes by viewModel.monthlyTotalBytes.collectAsState()
     val previousMonthTotalBytes by viewModel.previousMonthTotalBytes.collectAsState()
     val monthLabel by viewModel.monthLabel.collectAsState()
+    val monthlyMobileBytes by viewModel.monthlyMobileBytes.collectAsState()
+    val monthlyLimitBytes by viewModel.monthlyLimitBytes.collectAsState()
+    val monthlyLimitLabel by viewModel.monthlyLimitLabel.collectAsState()
 
     var showResetConfirmation by remember { mutableStateOf(false) }
     var showPurgeConfirmation by remember { mutableStateOf(false) }
@@ -270,7 +290,10 @@ fun HistoryScreen(
                             totalBytes = monthlyTotalBytes,
                             previousMonthBytes = previousMonthTotalBytes,
                             monthLabel = monthLabel,
-                            horizontalPadding = 12.dp
+                            horizontalPadding = 12.dp,
+                            mobileBytes = monthlyMobileBytes,
+                            mobileLimitBytes = monthlyLimitBytes,
+                            mobileLimitLabel = monthlyLimitLabel
                         )
                     }
                 }
@@ -297,30 +320,31 @@ fun HistoryScreen(
                 PinnedMonthlySummaryCard(
                     totalBytes = monthlyTotalBytes,
                     previousMonthBytes = previousMonthTotalBytes,
-                    monthLabel = monthLabel
+                    monthLabel = monthLabel,
+                    mobileBytes = monthlyMobileBytes,
+                    mobileLimitBytes = monthlyLimitBytes,
+                    mobileLimitLabel = monthlyLimitLabel
                 )
             }
         }
     }
 }
 
-/** The stored days as CSV, handed to the share sheet as text (no file, no permission). */
+/** The stored days as a real `.csv` attachment (FileProvider from the private cache, no permission). */
 private fun shareUsageCsv(context: android.content.Context, rows: List<DataUsageEntity>) {
-    try {
-        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(android.content.Intent.EXTRA_SUBJECT, context.getString(R.string.export_subject))
-            putExtra(android.content.Intent.EXTRA_TEXT, UsageCsv.build(rows))
-        }
-        context.startActivity(
-            android.content.Intent.createChooser(intent, context.getString(R.string.export_chooser))
-        )
-    } catch (e: Exception) {
-        // No share target is not an error worth crashing for.
-        e.printStackTrace()
-    }
+    CsvExport.share(
+        context = context,
+        csv = UsageCsv.build(rows),
+        fileName = CsvExport.fileName("usage"),
+        subject = context.getString(R.string.export_subject),
+        chooserTitle = context.getString(R.string.export_chooser)
+    )
 }
 
+/**
+ * One stored day. Tapping the card opens the per-day drill-down: download and upload per
+ * network, straight from the four stored counters (nothing derived, nothing estimated).
+ */
 @Composable
 fun HistoryRowItem(
     item: DataUsageEntity,
@@ -329,9 +353,22 @@ fun HistoryRowItem(
 ) {
     val dateDisplay = DateFormatter.readable(item.date, todayStr, stringResource(R.string.label_today_word))
     val isToday = item.date == todayStr
+    var expanded by rememberSaveable(item.date) { mutableStateOf(false) }
+    val expandedState = stringResource(R.string.a11y_collapse)
+    val collapsedState = stringResource(R.string.a11y_expand)
 
     GlassCard(modifier = Modifier.fillMaxWidth().testTag("history_item_card_${item.date}")) {
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(
+                    role = Role.Button,
+                    onClickLabel = if (expanded) expandedState else collapsedState
+                ) { expanded = !expanded }
+                .semantics { stateDescription = if (expanded) expandedState else collapsedState }
+                .padding(16.dp)
+                .testTag("history_item_toggle_${item.date}")
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -418,9 +455,92 @@ fun HistoryRowItem(
                         color = secondary(),
                         modifier = Modifier.testTag("history_wifi_${item.date}")
                     )
+                    val chevronRotation by animateFloatAsState(
+                        targetValue = if (expanded) 180f else 0f,
+                        animationSpec = tween(200),
+                        label = "history_chevron"
+                    )
+                    AppIcon(
+                        resId = R.drawable.ic_expand_more,
+                        contentDescription = null,
+                        tint = secondary(),
+                        modifier = Modifier
+                            .size(14.dp)
+                            .rotate(chevronRotation)
+                    )
+                }
+            }
+
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(animationSpec = tween(200)) + fadeIn(tween(200)),
+                exit = shrinkVertically(animationSpec = tween(160)) + fadeOut(tween(120))
+            ) {
+                Column(modifier = Modifier.padding(top = 12.dp).testTag("history_detail_${item.date}")) {
+                    HorizontalDivider(color = glassBorder.copy(alpha = 0.5f))
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        DayDirectionColumn(
+                            modifier = Modifier.weight(1f),
+                            iconRes = R.drawable.ic_cellular,
+                            title = stringResource(R.string.network_mobile),
+                            rx = item.mobileRx,
+                            tx = item.mobileTx
+                        )
+                        DayDirectionColumn(
+                            modifier = Modifier.weight(1f),
+                            iconRes = R.drawable.ic_wifi,
+                            title = stringResource(R.string.network_wifi),
+                            rx = item.wifiRx,
+                            tx = item.wifiTx
+                        )
+                    }
                 }
             }
         }
+    }
+}
+
+/** Download / upload of one network for one day, from the stored counters. */
+@Composable
+private fun DayDirectionColumn(modifier: Modifier, iconRes: Int, title: String, rx: Long, tx: Long) {
+    Column(modifier = modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            AppIcon(resId = iconRes, contentDescription = null, tint = secondary(), modifier = Modifier.size(11.dp))
+            Text(
+                text = title.uppercase(Locale.getDefault()),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+                fontFamily = FontFamily.Monospace,
+                color = secondary()
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        DirectionLine(iconRes = R.drawable.ic_arrow_down, label = stringResource(R.string.label_download), bytes = rx)
+        Spacer(modifier = Modifier.height(3.dp))
+        DirectionLine(iconRes = R.drawable.ic_arrow_up, label = stringResource(R.string.label_upload), bytes = tx)
+    }
+}
+
+@Composable
+private fun DirectionLine(iconRes: Int, label: String, bytes: Long) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            AppIcon(resId = iconRes, contentDescription = label, tint = secondary(), modifier = Modifier.size(10.dp))
+            Text(text = label.lowercase(Locale.getDefault()), fontSize = 10.sp, color = secondary())
+        }
+        Text(
+            text = BytesFormatter.format(bytes),
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onBackground
+        )
     }
 }
 
@@ -434,7 +554,10 @@ fun PinnedMonthlySummaryCard(
     totalBytes: Long,
     previousMonthBytes: Long = 0L,
     monthLabel: String = "",
-    horizontalPadding: androidx.compose.ui.unit.Dp = 20.dp
+    horizontalPadding: androidx.compose.ui.unit.Dp = 20.dp,
+    mobileBytes: Long = 0L,
+    mobileLimitBytes: Long = 0L,
+    mobileLimitLabel: String = ""
 ) {
     val isDark = isDarkModeActive()
     val cardColor = if (isDark) Color(0xFFF2F4F8) else Color(0xFF15181D)
@@ -459,52 +582,99 @@ fun PinnedMonthlySummaryCard(
                 .clip(RoundedCornerShape(20.dp))
                 .background(cardColor)
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(18.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = if (monthLabel.isBlank()) {
-                            stringResource(R.string.history_this_month)
-                        } else {
-                            stringResource(R.string.history_this_month_named, monthLabel.uppercase(Locale.getDefault()))
-                        },
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.2.sp,
-                        color = onCard.copy(alpha = 0.55f)
-                    )
-                    Spacer(modifier = Modifier.height(3.dp))
-                    Text(
-                        text = stringResource(R.string.history_monthly_total),
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = onCard
-                    )
-                    if (previousMonthBytes > 0L) {
-                        Spacer(modifier = Modifier.height(3.dp))
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
                         Text(
-                            text = monthDeltaLabel(totalBytes, previousMonthBytes),
+                            text = if (monthLabel.isBlank()) {
+                                stringResource(R.string.history_this_month)
+                            } else {
+                                stringResource(R.string.history_this_month_named, monthLabel.uppercase(Locale.getDefault()))
+                            },
                             fontSize = 10.sp,
                             fontFamily = FontFamily.Monospace,
-                            color = onCard.copy(alpha = 0.75f),
-                            modifier = Modifier.testTag("month_delta_text")
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.2.sp,
+                            color = onCard.copy(alpha = 0.55f)
+                        )
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            text = stringResource(R.string.history_monthly_total),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = onCard
+                        )
+                        if (previousMonthBytes > 0L) {
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = monthDeltaLabel(totalBytes, previousMonthBytes),
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = onCard.copy(alpha = 0.75f),
+                                modifier = Modifier.testTag("month_delta_text")
+                            )
+                        }
+                    }
+                    Text(
+                        text = BytesFormatter.format(totalBytes),
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        color = onCard,
+                        modifier = Modifier.testTag("monthly_total_text")
+                    )
+                }
+                // Optional monthly mobile limit: progress of the real month-to-date mobile bytes.
+                // Warn-only — the bar is information, never a gate.
+                val progress = LimitAlerts.progress(mobileBytes, mobileLimitBytes)
+                if (progress != null) {
+                    val percent = (progress * 100).toInt()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 18.dp, end = 18.dp, bottom = 16.dp)
+                            .testTag("monthly_limit_progress")
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = stringResource(
+                                    R.string.history_monthly_limit_line,
+                                    BytesFormatter.format(mobileBytes),
+                                    mobileLimitLabel
+                                ),
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = onCard.copy(alpha = 0.75f)
+                            )
+                            Text(
+                                text = "$percent%",
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                color = if (percent >= 90) AccentWarning else onCard.copy(alpha = 0.85f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        LinearProgressIndicator(
+                            progress = { progress.toFloat() },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(4.dp)
+                                .clip(RoundedCornerShape(2.dp)),
+                            color = if (percent >= 90) AccentWarning else onCard,
+                            trackColor = onCard.copy(alpha = 0.15f)
                         )
                     }
                 }
-                Text(
-                    text = BytesFormatter.format(totalBytes),
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace,
-                    color = onCard,
-                    modifier = Modifier.testTag("monthly_total_text")
-                )
             }
         }
     }

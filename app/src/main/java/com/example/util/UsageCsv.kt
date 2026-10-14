@@ -3,8 +3,8 @@ package com.example.util
 import com.example.data.DataUsageEntity
 
 /**
- * Builds the CSV the History screen shares (`ACTION_SEND`, `text/csv` as plain text —
- * no file, no storage permission, no `FileProvider`).
+ * Builds the CSV the History screen shares (as a `.csv` attachment via [CsvExport] — from
+ * the private cache, no storage permission).
  *
  * Pure function over the stored rows: one line per day, raw **bytes** as the kernel
  * counted them (no unit rounding — a spreadsheet can convert, the app must not lose

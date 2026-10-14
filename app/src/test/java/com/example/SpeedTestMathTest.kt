@@ -5,6 +5,7 @@ import com.example.services.SpeedTestEngine
 import com.example.util.DeltaMath
 import com.example.util.UsageCsv
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -108,6 +109,58 @@ class SpeedTestMathTest {
         )
         assertEquals(1L, result.durationMs)
         assertEquals(0.0, result.bitsPerSecond, 0.0)
+    }
+
+    // ------------------------------------------------------------------ upload ack window
+
+    @Test
+    fun anAcknowledgedUploadIsTimedUntilTheLastServerResponse() {
+        // 6 s upload phase on a slow uplink: 3 MB handed to the kernel by the deadline, but
+        // the server only confirmed the last body 1.4 s later — that is when the bytes
+        // really arrived, so the window runs first byte → last ack and counts everything.
+        val result = SpeedTestEngine.computeUploadThroughput(
+            totalBytes = 3_000_000L,
+            startNs = 0L,
+            firstByteNs = 300 * ms,
+            graceNs = 1_300 * ms,
+            graceBytes = 900_000L,
+            sendEndNs = 6_050 * ms,
+            lastAckNs = 7_450 * ms,
+            streams = 3
+        )
+        assertTrue(result.acknowledgedWindow)
+        assertEquals(7_150L, result.durationMs)
+        assertEquals(3_000_000L, result.bytes)
+        assertEquals(3_000_000L, result.totalBytes)
+        assertEquals(3_000_000L * 8.0 / 7.15, result.bitsPerSecond, 1.0)
+        // The classic send-side window would have claimed more than that.
+        val sendSide = SpeedTestEngine.computeThroughput(3_000_000L, 0L, 300 * ms, 1_300 * ms, 900_000L, 6_050 * ms, 3)
+        assertTrue(sendSide.bitsPerSecond > result.bitsPerSecond)
+    }
+
+    @Test
+    fun anUnacknowledgedUploadFallsBackToTheSendSideWindowAndSaysSo() {
+        val acked = SpeedTestEngine.computeUploadThroughput(
+            totalBytes = 9_000_000L, startNs = 0L, firstByteNs = 200 * ms, graceNs = 1_200 * ms,
+            graceBytes = 1_000_000L, sendEndNs = 6_000 * ms, lastAckNs = 0L, streams = 3
+        )
+        val classic = SpeedTestEngine.computeThroughput(9_000_000L, 0L, 200 * ms, 1_200 * ms, 1_000_000L, 6_000 * ms, 3)
+        assertFalse(acked.acknowledgedWindow)
+        assertEquals(classic.bitsPerSecond, acked.bitsPerSecond, 0.0)
+        assertEquals(classic.durationMs, acked.durationMs)
+        assertEquals(classic.bytes, acked.bytes)
+    }
+
+    @Test
+    fun anAcknowledgementBeforeTheSendSnapshotStillClosesTheWindowAtTheAck() {
+        // A fast server answers within the 250 ms join grace: the ack time is the truth,
+        // the (later) send-side snapshot must not stretch the window.
+        val result = SpeedTestEngine.computeUploadThroughput(
+            totalBytes = 60_000_000L, startNs = 0L, firstByteNs = 100 * ms, graceNs = 1_100 * ms,
+            graceBytes = 8_000_000L, sendEndNs = 6_240 * ms, lastAckNs = 6_060 * ms, streams = 3
+        )
+        assertTrue(result.acknowledgedWindow)
+        assertEquals(5_960L, result.durationMs)
     }
 
     // ------------------------------------------------------------------ deltas
