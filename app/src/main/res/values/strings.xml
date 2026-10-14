@@ -251,6 +251,10 @@
     <!-- Home-screen widget -->
     <string name="widget_label">Today\'s usage</string>
     <string name="widget_description">Today\'s real data usage — mobile + Wi-Fi.</string>
+    <string name="tile_label">Speed Meter</string>
+    <string name="tile_subtitle_today">Today %1$s</string>
+    <string name="tile_subtitle_running">Measuring</string>
+    <string name="tile_subtitle_paused">Meter paused</string>
     <string name="widget_today">TODAY</string>
     <string name="widget_breakdown">Mobile %1$s · Wi-Fi %2$s</string>
     <string name="widget_updated">Updated %1$s</string>

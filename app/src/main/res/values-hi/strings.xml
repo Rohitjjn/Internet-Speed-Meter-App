@@ -251,6 +251,10 @@
     <!-- Home-screen widget -->
     <string name="widget_label">आज का उपयोग</string>
     <string name="widget_description">आज का असली डेटा उपयोग — मोबाइल + Wi-Fi।</string>
+    <string name="tile_label">स्पीड मीटर</string>
+    <string name="tile_subtitle_today">आज %1$s</string>
+    <string name="tile_subtitle_running">माप जारी है</string>
+    <string name="tile_subtitle_paused">मीटर रुका हुआ है</string>
     <string name="widget_today">आज</string>
     <string name="widget_breakdown">मोबाइल %1$s · Wi-Fi %2$s</string>
     <string name="widget_updated">अपडेट %1$s</string>

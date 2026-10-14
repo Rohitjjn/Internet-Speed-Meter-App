@@ -1,6 +1,7 @@
 # Database schema
 
-**Database**: `speed_data_tracker_db` (Room, **version 3**, `fallbackToDestructiveMigration`).
+**Database**: `speed_data_tracker_db` (Room, **version 3**,
+`fallbackToDestructiveMigration(dropAllTables = true)`).
 
 No Room schema change was needed for the speed-test, widget or export work: speed-test
 results and display preferences live in DataStore (see the bottom of this file), the daily
@@ -63,11 +64,15 @@ Only the foreground service writes this table (single writer, no contention):
 | Dashboard / History screens | `getDataByDate` / `getAllHistory` / `getThisMonthTotal` Flows |
 | History → export | `UsageCsv.build(rows)` — header + one line per day, raw bytes, newest first; shared as text through `ACTION_SEND` (no file is written) |
 | `TodayUsageWidget` | the service's in-memory `todayUsageFlow` while it runs, otherwise `getByDate(today)` from `WidgetRefreshWorker` (every 30 min) |
+| `SpeedMeterTile` (Quick Settings) | `getByDate(today)` once per `onStartListening` (shade opened) → subtitle; never a live value |
 | Status-bar notification | the service's own row (`todayUsageFlow`) |
 
 ## DataStore (not SQL, but persisted app state)
 
-File `speed_meter_prefs.preferences_pb` (see `PreferencesManager`):
+File `speed_meter_prefs.preferences_pb` (see `PreferencesManager`). The `DataStore`
+instance is a constructor parameter (`PreferencesManager(context, store = context.dataStore)`),
+so unit tests run against an isolated per-test file (`TestPreferences`) and never read or
+write the real one.
 
 | Key | Type | Purpose |
 |---|---|---|

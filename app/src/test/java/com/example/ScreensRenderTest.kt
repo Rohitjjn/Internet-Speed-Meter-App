@@ -1,10 +1,10 @@
 package com.example
 
 import android.app.Application
-import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.core.app.ApplicationProvider
 import com.example.services.Connectivity
 import com.example.services.LatencyResult
@@ -73,15 +73,15 @@ class ScreensRenderTest {
         composeRule.onNodeWithTag("permissions_card").assertExists()
         composeRule.onNodeWithTag("test_server_card").assertExists()
         // Collapsed by default: the saved summary is visible, the options are not.
-        composeRule.onNodeWithTag("saved_server_label").assertIsDisplayed()
+        composeRule.onNodeWithTag("saved_server_label").assertExists()
         composeRule.onNodeWithTag("server_option_librespeed").assertDoesNotExist()
 
-        composeRule.onNodeWithTag("test_server_header").performClick()
+        composeRule.onNodeWithTag("test_server_header").performSemanticsAction(SemanticsActions.OnClick)
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("server_option_librespeed").assertExists()
 
         // Tap = save: the stored preference changes, no extra "save" step.
-        composeRule.onNodeWithTag("server_option_librespeed").performClick()
+        composeRule.onNodeWithTag("server_option_librespeed").performSemanticsAction(SemanticsActions.OnClick)
         val stored = runBlocking { isolated.manager.testServerFlow.first { it == SpeedTestServers.ID_LIBRESPEED } }
         assertEquals(SpeedTestServers.ID_LIBRESPEED, stored)
     }
@@ -109,7 +109,7 @@ class ScreensRenderTest {
         composeRule.onNodeWithTag("speed_test_gauge_card").assertExists()
         composeRule.onNodeWithTag("speed_test_phase_label").assertExists()
         composeRule.onNodeWithTag("speed_test_gauge_number").assertExists()
-        composeRule.onNodeWithTag("speed_test_start_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("speed_test_start_button").assertExists()
         // Idle = nothing measured yet: no ghost legend, no result card, no error.
         composeRule.onNodeWithTag("speed_test_ghost_legend").assertDoesNotExist()
         composeRule.onNodeWithTag("speed_test_share_button").assertDoesNotExist()

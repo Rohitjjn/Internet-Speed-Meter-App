@@ -57,7 +57,10 @@ for real over the network (plain `HttpURLConnection`, no third-party SDK):
 
 - **Latency + jitter** — 5 round trips on a **kept-alive** connection after a throw-away
   warm-up request, so a "ping" is a round trip and never a TLS handshake.
-- **Download** — 4 parallel streams from the selected endpoint for 8 s.
+- **Download** — 4 parallel streams from the selected endpoint for 8 s. Each stream asks
+  for 20 MB and **doubles its next request (up to 100 MB) whenever the previous body
+  finished in under a second**, reusing the kept-alive connection — so a gigabit line is
+  never throttled by request setup, while a slow link keeps spending small bodies.
 - **Upload** — the server first has to **acknowledge** a fixed 32 KiB POST with a 2xx/3xx
   (an endpoint that only discards bytes, or a captive portal, fails the phase instead of
   producing a fantasy number); then 3 parallel chunked POST streams for 6 s.
@@ -118,6 +121,15 @@ background would be refused anyway, and a tight loop would only burn the remaini
 A 60-minute WorkManager watchdog (`SpeedKeepAliveWorker`) restarts the service if it was
 killed (e.g. after an app update or a device reboot — the boot receiver restarts it too).
 
+**A refused restart is never silent.** Since Android 12 a foreground service may not be
+started from the background (WorkManager is *not* an exemption), and on Android 15 the
+`dataSync` budget can be exhausted. Whenever a start is refused — by the timeout, by the
+watchdog, by the boot receiver or by `startForeground` itself — the app posts a low-priority
+**"Speed meter paused"** notification that says plainly that nothing is being counted and
+that a tap resumes the meter (a notification tap, like opening the app, *is* allowed to start
+the service). The notification is cleared automatically the moment the meter is running
+again, and opening the app re-starts the meter on every resume.
+
 ### Home-screen widget
 
 **Today's usage** (2×1, resizable) shows today's real total with the mobile / Wi-Fi split
@@ -125,6 +137,14 @@ and the time it was rendered. Plain `RemoteViews` (no Glance): the running servi
 the row it just wrote (at most once a minute, only when a widget is placed), a 30-minute
 `WidgetRefreshWorker` covers the case the service is not running, and the launcher's own
 update period re-renders it too. Tapping it opens the app.
+
+### Quick Settings tile
+
+**Speed Meter** can be added to the notification shade. It is a launcher, not a live
+meter: its state mirrors whether the meter is running and its subtitle (Android 10+) is
+today's **persisted** total — the row the service wrote from OS counters — or "Meter
+paused". It never shows a speed, because a tile cannot follow one without keeping the
+process awake.
 
 ---
 
@@ -139,15 +159,16 @@ update period re-renders it too. Tapping it opens the app.
 - 📱 Mobile & Wi-Fi daily usage cards (real counters)
 - 🗓 History (all recorded days, newest first) + pinned monthly total, CSV export via the
   share sheet, clear option; two-column on tablets / landscape
-- 🏠 Home-screen widget with today's real total (mobile / Wi-Fi split)
+- 🏠 Home-screen widget with today's real total (mobile / Wi-Fi split) + Quick Settings tile
 - 🎚 Optional daily mobile **warning** limit (MB/GB) — alerts at 50 % / 90 % / 100 %
   with a buzz; the app never blocks data
 - 🌗 Glassy light + dark theme (GPT-style glassmorphism) + accent picker
 - 🔔 Status-bar notification with live speed + custom speed glyph icon
 - 🌐 Fully localizable: **every** user-facing string lives in `values/strings.xml` with a
-  Hindi counterpart in `values-hi/` (229 keys, parity enforced by `StringResourceParityTest`)
+  Hindi counterpart in `values-hi/` (236 keys, parity enforced by `StringResourceParityTest`)
 - ♿ Accessibility: content descriptions on the live numbers, the gauge and every icon
-  button; polite live regions for phase/status changes; selection semantics on pickers
+  button; polite live regions for phase/status changes; selection semantics on pickers;
+  no text below 10 sp; one haptic tick when a test result lands
 - 🧾 Privacy: no `ACCESS_WIFI_STATE` / `READ_PHONE_STATE`; `INTERNET` exists **only**
   for the manual speed test, no analytics, no accounts, everything on-device
 
@@ -178,13 +199,19 @@ per-transport attribution, injected monotonic clock, bounded history over a 20-m
 `SourceHealthTest` (the flap-free source-switch rule), `SpeedTestViewModelTest` (metered
 confirmation, AUTO fallback only on unreachability, explicit endpoint never falls back,
 abort on transport change, previous result for the ghost needle, STOP → idle),
-`SpeedTestMathTest` (grace-window throughput, "vs last" percentages, CSV export),
+`SpeedTestMathTest` (grace-window throughput, adaptive request sizing, "vs last"
+percentages, CSV export),
 `TestServerTest` (endpoint URLs, fallback order, data-cost estimate), `SettingsViewModelTest`
 (endpoint auto-save round-trips), `ExampleUnitTest` (formatters, bits/bytes modes,
 `/proc/net/dev` parser, gauge scale, jitter, result serialization), `AccountingTest` (reset
 baselines, clamping, midnight rollover), `PreferencesManagerTest` (DataStore round-trips),
 `HistoryDatabaseTest` (Room), `StringResourceParityTest` (English ⇄ Hindi key and
-format-argument parity) and `DashboardUiSmokeTest` (Robolectric Compose render).
+format-argument parity), `TodayUsageWidgetTest` (the widget's `RemoteViews` carry the
+real total) and the Robolectric Compose renders `DashboardUiSmokeTest` + `ScreensRenderTest`
+(Settings and the idle speed-test screen against fakes).
+
+Tests never touch the app's real DataStore: `PreferencesManager` takes its `DataStore`
+as a constructor parameter and `TestPreferences` hands each test an isolated file.
 
 On a device (network-gated, skips without a connection):
 
@@ -196,8 +223,16 @@ On a device (network-gated, skips without a connection):
 
 ## Build & release (GitHub Actions)
 
-`.github/workflows/android-build.yml` is a **manual workflow**
-(*Actions → Android Build & Release → Run workflow*) with these inputs:
+`.github/workflows/android-build.yml` does two things:
+
+- **On every push** (any branch; Markdown/docs-only pushes are skipped) it compiles the
+  app and runs the unit tests plus a non-blocking lint pass. Both publish their condensed
+  output as **check runs** ("Unit test log", "Lint log" — compiler errors, failing tests,
+  lint warnings) with inline annotations, so a failure is readable from the commit's
+  checks tab without downloading the raw log (`.github/scripts/publish_check.py`, stdlib
+  only).
+- **Manually** (*Actions → Android Build & Release → Run workflow*) it additionally builds
+  and optionally releases the APK, with these inputs:
 
 | Input | Meaning |
 |---|---|
@@ -209,7 +244,7 @@ On a device (network-gated, skips without a connection):
 | `release_notes` | Markdown body for the release |
 | `create_release` | `yes` → create/update the GitHub release with the APK |
 
-The workflow runs the unit tests, builds the APK, uploads it as a build
+The manual run executes the unit tests, builds the APK, uploads it as a build
 artifact **and** (optionally) to a GitHub Release. Re-running with the same
 tag **overwrites** the APK asset in place.
 
@@ -243,18 +278,22 @@ app/src/main/java/com/example/
 │   │                          #   last speed, speed-test results
 │   └── UsageResetter.kt       # single reset path (service path uses its own)
 ├── services/
-│   ├── SpeedMeterService.kt   # 500 ms read loop + 15 s accounting + notification + widget push
+│   ├── SpeedMeterService.kt   # 500 ms read loop + 15 s accounting + notification + widget push,
+│   │                          #   "meter paused" notice when a foreground start is refused
 │   ├── SpeedEngine.kt         # pure measurement maths (unit-tested, no Android)
 │   ├── SourceHealth.kt        # pure source-switch rule (TrafficStats ⇄ /proc/net/dev)
 │   ├── TrafficCounterReader.kt# TrafficStats / /proc/net/dev + per-interface parser
 │   ├── SpeedTestEngine.kt     # ping/download/upload measurement, grace window, upload ack,
 │   │                          #   abort signal + socket sentinel, SpeedTestRunner interface
 │   ├── TestServer.kt          # endpoint profiles (Cloudflare/LibreSpeed/custom) + cost
-│   ├── NetworkMonitor.kt      # Connectivity (transport / metered / Data Saver), injectable
+│   ├── NetworkMonitor.kt      # Connectivity (transport / metered / Data Saver) + pushed
+│   │                          #   transportChanges() flow (NetworkCallback), injectable
 │   └── ServiceScheduler.kt    # WorkManager keep-alive, timeout retry with back-off
 ├── widget/
 │   ├── TodayUsageWidget.kt    # AppWidgetProvider + RemoteViews renderer
 │   └── WidgetRefreshWorker.kt # 30-min refresh from the persisted daily row
+├── tile/
+│   └── SpeedMeterTile.kt      # Quick Settings tile (state = meter running, subtitle = today)
 ├── util/
 │   ├── Formatting.kt          # SpeedFormatter / BytesFormatter / DateFormatter / DeltaMath
 │   └── UsageCsv.kt            # pure CSV builder for the History export

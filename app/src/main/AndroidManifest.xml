@@ -65,6 +65,21 @@
                 android:resource="@xml/widget_today_info" />
         </receiver>
 
+        <!-- Quick Settings tile: opens the app; subtitle = today's persisted total (API 29+). -->
+        <service
+            android:name=".tile.SpeedMeterTile"
+            android:exported="true"
+            android:icon="@drawable/ic_speed"
+            android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="false" />
+        </service>
+
         <service
             android:name=".services.SpeedMeterService"
             android:enabled="true"
