@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import com.example.ui.theme.motionDuration
 import com.example.R
 import com.example.ui.components.AppBackground
 import com.example.ui.components.AppIcon
@@ -261,7 +262,7 @@ fun IntroScreen(
                         val isSelected = index == currentPage
                         val dotWidth by animateDpAsState(
                             targetValue = if (isSelected) 22.dp else 8.dp,
-                            animationSpec = tween(260),
+                            animationSpec = tween(motionDuration(260)),
                             label = "intro_dot_$index"
                         )
                         Box(

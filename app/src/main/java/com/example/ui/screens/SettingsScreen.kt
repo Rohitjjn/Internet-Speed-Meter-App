@@ -79,6 +79,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.ui.theme.motionDuration
 import com.example.R
 import com.example.services.SpeedMeterService
 import com.example.services.SpeedTestServers
@@ -840,8 +841,8 @@ fun SettingsScreen(
                     )
                     AnimatedVisibility(
                         visible = serverCardExpanded,
-                        enter = expandVertically(animationSpec = tween(220)) + fadeIn(tween(220)),
-                        exit = shrinkVertically(animationSpec = tween(180)) + fadeOut(tween(120))
+                        enter = expandVertically(animationSpec = tween(motionDuration(220))) + fadeIn(tween(motionDuration(220))),
+                        exit = shrinkVertically(animationSpec = tween(motionDuration(180))) + fadeOut(tween(motionDuration(120)))
                     ) {
                         Column(
                             modifier = Modifier.padding(top = 12.dp),
@@ -1006,8 +1007,8 @@ fun SettingsScreen(
                     )
                     AnimatedVisibility(
                         visible = engineCardExpanded,
-                        enter = expandVertically(animationSpec = tween(220)) + fadeIn(tween(220)),
-                        exit = shrinkVertically(animationSpec = tween(180)) + fadeOut(tween(120))
+                        enter = expandVertically(animationSpec = tween(motionDuration(220))) + fadeIn(tween(motionDuration(220))),
+                        exit = shrinkVertically(animationSpec = tween(motionDuration(180))) + fadeOut(tween(motionDuration(120)))
                     ) {
                         Column(
                             modifier = Modifier.padding(top = 12.dp),
@@ -1166,7 +1167,7 @@ private fun CollapsibleHeader(
 ) {
     val rotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
-        animationSpec = tween(durationMillis = 220),
+        animationSpec = tween(durationMillis = motionDuration(220)),
         label = "${testTag}_chevron"
     )
     val toggleLabel = if (expanded) stringResource(R.string.a11y_collapse) else stringResource(R.string.a11y_expand)

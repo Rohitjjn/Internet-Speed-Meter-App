@@ -8,6 +8,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.ui.theme.LocalReducedMotion
 import com.example.ui.theme.LocalSystemReducedMotion
 import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.theme.motionDuration
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -26,20 +27,22 @@ class SystemMotionTest {
         val user = mutableStateOf(false)
         var effective = false
         var forced = false
+        var duration = 0
         Settings.Global.putFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
         composeRule.setContent {
             MyApplicationTheme(darkTheme = true, reducedMotion = user.value) {
+                duration = motionDuration(520)
                 effective = LocalReducedMotion.current
                 forced = LocalSystemReducedMotion.current
             }
         }
-        composeRule.runOnIdle { assertFalse(effective) }
+        composeRule.runOnIdle { assertFalse(effective); assertEquals(520, duration) }
         Settings.Global.putFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
         composeRule.waitUntil { composeRule.waitForIdle(); forced && effective }
-        composeRule.runOnIdle { assertFalse(user.value); user.value = true }
+        composeRule.runOnIdle { assertFalse(user.value); assertEquals(0, duration); user.value = true }
         Settings.Global.putFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
         composeRule.waitUntil { composeRule.waitForIdle(); !forced }
         composeRule.runOnIdle { assertTrue(effective); user.value = false }
-        composeRule.runOnIdle { assertFalse(effective) }
+        composeRule.runOnIdle { assertFalse(effective); assertEquals(520, duration) }
     }
 }

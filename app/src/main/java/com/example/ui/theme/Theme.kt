@@ -65,6 +65,10 @@ val LocalReducedMotion = staticCompositionLocalOf { false }
 @Composable
 fun isReducedMotion(): Boolean = LocalReducedMotion.current
 
+/** Duration helper for finite decorative transitions; never changes engine timings. */
+@Composable
+fun motionDuration(normalMillis: Int): Int = if (isReducedMotion()) 0 else normalMillis
+
 @Composable
 fun isDarkModeActive(): Boolean = LocalDarkTheme.current
 

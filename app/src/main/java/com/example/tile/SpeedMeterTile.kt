@@ -8,6 +8,7 @@ import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import com.example.MainActivity
 import com.example.R
+import com.example.data.DataUsageEntity
 import com.example.data.AppDatabase
 import com.example.data.DataUsageRepository
 import com.example.services.MeterControl
@@ -25,8 +26,8 @@ import kotlinx.coroutines.withContext
  * Quick Settings tile — one tap from the shade into the app (where the speed test lives).
  *
  * Honest by construction: the tile's state mirrors whether the meter is actually running,
- * and the subtitle (API 29+) is **today's persisted total** — a row the service wrote from
- * OS counters — or a dash while there is none. A meter the user paused says "paused by
+ * and the subtitle (API 29+) is **today's accounting total** — the running service's
+ * latest row, otherwise the persisted row from OS counters — or a dash while there is none. A meter the user paused says "paused by
  * you" (never "measuring"). It never shows a live speed, because a tile cannot follow one
  * without keeping the process awake.
  */
@@ -44,16 +45,17 @@ class SpeedMeterTile : TileService() {
         scope = listeningScope
         listeningScope.launch {
             val total = try {
-                DataUsageRepository(AppDatabase.getDatabase(applicationContext).dataUsageDao())
-                    .getByDate(DateFormatter.day())
-                    ?.total
+                val today = DateFormatter.day()
+                loadTileTotal(today, SpeedMeterService.isServiceRunning.value, SpeedMeterService.todayUsageFlow.value) {
+                    DataUsageRepository(AppDatabase.getDatabase(applicationContext).dataUsageDao()).getByDate(today)
+                }
             } catch (e: Exception) {
                 null
             }
             // A meter the user switched off is labelled as such — not as an OS pause.
-            val pausedByUser = !running && MeterControl.isPausedByUser(applicationContext)
+            val pausedByUser = MeterControl.isPausedByUser(applicationContext)
             withContext(Dispatchers.Main) {
-                if (scope === listeningScope) renderTile(running = running, todayTotal = total, pausedByUser = pausedByUser)
+                if (scope === listeningScope) renderTile(running = SpeedMeterService.isServiceRunning.value, todayTotal = total, pausedByUser = pausedByUser)
             }
         }
     }
@@ -107,3 +109,11 @@ class SpeedMeterTile : TileService() {
         tile.updateTile()
     }
 }
+
+/** A same-day accounting snapshot, never a live speed or yesterday's total. */
+internal suspend fun loadTileTotal(
+    today: String,
+    running: Boolean,
+    live: DataUsageEntity,
+    loadPersisted: suspend () -> DataUsageEntity?
+): Long? = if (running && live.date == today) live.total else loadPersisted()?.total
