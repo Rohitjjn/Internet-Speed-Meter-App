@@ -73,7 +73,8 @@ class ScreensRenderTest {
         composeRule.onNodeWithTag("permissions_card").assertExists()
         composeRule.onNodeWithTag("test_server_card").assertExists()
         // Collapsed by default: the saved summary is visible, the options are not.
-        composeRule.onNodeWithTag("saved_server_label").assertExists()
+        // The summary lives inside the clickable header, i.e. inside a merged node.
+        composeRule.onNodeWithTag("saved_server_label", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithTag("server_option_librespeed").assertDoesNotExist()
 
         composeRule.onNodeWithTag("test_server_header").performSemanticsAction(SemanticsActions.OnClick)

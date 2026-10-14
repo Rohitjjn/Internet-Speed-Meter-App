@@ -2,6 +2,72 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-10-14 · loop 5] — CI you can read, honest "meter paused", adaptive download, pushed abort, test isolation
+### Fixed
+- **CI gave no compile signal.** The workflow only ran on manual dispatch, and GitHub's raw
+  Actions logs are not reachable from every environment. The unit-test and lint jobs now run
+  on **every push** (Markdown/docs-only pushes skipped) and publish condensed **check runs**
+  — "Unit test log" (compiler errors, failing tests with the first stack frames, Gradle task
+  that failed) and "Lint log" (every issue with file:line) — plus inline annotations, through
+  a stdlib-only `.github/scripts/publish_check.py`. The build/release job keeps all seven
+  manual inputs and still runs only on dispatch.
+- **Four tests that the first green-light run exposed:** the gauge scale asserted a 10 %
+  headroom the spec never asked for (`niceCeilingMbps` now rounds up to the next nice number,
+  44 → 50, 95 → 100); `resetSession` did not republish, so the dashboard kept the old session
+  figures until the next tick; `cancelTest()` needed the dispatcher drained before asserting;
+  `TestServerTest`'s cost figures were stale. `fallbackToDestructiveMigration()` →
+  `fallbackToDestructiveMigration(dropAllTables = true)` (Room 2.7 deprecation).
+- **A refused foreground start was silent.** Since Android 12 a foreground service cannot be
+  started from the background (WorkManager is *not* an exemption) and Android 15 can exhaust
+  the `dataSync` budget; the watchdog, the boot receiver and the post-timeout retry simply
+  failed and the user saw a frozen "last known" number. `startService()` now returns whether
+  the start was accepted; `startForegroundWithNotification()` reports a thrown
+  `startForeground`; every refusal posts a low-priority **"Speed meter paused"** notification
+  (channel `speed_meter_status`, id 1002) that says nothing is being counted and that a tap
+  resumes the meter (a notification tap, like opening the app, *is* allowed to start it). The
+  notice is cleared on the next successful `onStartCommand`, `MainActivity.onResume()`
+  re-starts the meter, and the watchdog returns `Result.retry()` (back-off) when refused.
+- **Download could be request-bound on fast lines.** Every stream fetched 20 MB bodies back
+  to back; with 4 streams a gigabit connection finished each in ~150 ms and spent a visible
+  share of the window on request setup. Streams now **adapt**: when a body completes in under
+  one second the next request doubles (20 → 40 → 80 → 100 MB cap), on a **kept-alive**
+  connection; a slow or cut-off body keeps its size. `nextRequestBytes` is pure and tested.
+- **Transport abort was polled.** The view model checked `currentTransport()` every 500 ms;
+  `Connectivity.transportChanges()` is now a `Flow` fed by `registerDefaultNetworkCallback`
+  (with a 2 s safety poll for ROMs that drop callbacks), so a Wi-Fi → mobile switch aborts the
+  test the moment the OS reports it. The engine's grace window also starts at the first byte.
+- **Unit tests wrote to the app's real DataStore.** `PreferencesManager` takes its
+  `DataStore<Preferences>` as a constructor parameter (default: the app file);
+  `SettingsViewModel` accepts a `PreferencesManager`; `TestPreferences` gives every test an
+  isolated file that is deleted afterwards. The singleton-restore hacks are gone.
+- Lint: dead API-23 branches (minSdk is 24), unused `black`/`white` colours and two unused
+  drawables removed; redundant activity label dropped; widget layout no longer uses 9–10 sp.
+
+### Added
+- **Quick Settings tile** (`SpeedMeterTile`): one tap from the shade into the app. Its state
+  mirrors whether the meter is running and its subtitle (Android 10+) is today's *persisted*
+  total or "Meter paused" — never a live speed, which a tile cannot follow honestly.
+- Tests: `ScreensRenderTest` (Settings renders, the server group expands and **saves on
+  tap**; the idle speed-test screen renders gauge, phase label and START without a network),
+  `TodayUsageWidgetTest` (the `RemoteViews` carry the real total, the split and a timestamp,
+  and the root is tappable), `SpeedTestMathTest` request-sizing cases. 101 unit tests.
+
+### Changed
+- **Readability:** no Compose text below **10 sp** any more (the 8.5 / 9 / 9.5 sp eyebrows and
+  axis captions were bumped); the widget uses ≥ 11 sp.
+- **Haptics:** one light tick when a *new* speed-test result lands (not when the tab is
+  re-entered with an old one).
+- **Settings** is a single readable column, capped at 720 dp and centred on tablets and in
+  landscape.
+- README / blueprint / schema describe the push CI, the refusal path, the adaptive request
+  size, the pushed transport watcher, the tile and the test isolation. Hindi strings: 236 keys.
+
+### Deferred (see `docs/next-loop-prompt.md`)
+- Monthly mobile warning (warn-only), FileProvider-backed CSV + test-history export, 4×1
+  widget, per-phase peak captions (interval peaks are too bursty to show without a 1 s
+  smoothing window), dependency refresh (lint lists newer AGP/Compose/Room/WorkManager — a
+  separate, CI-verified loop).
+
 ## [2026-10-14 · loop 4] — speed-test accuracy + testability, Android 15 timeout fix, full Hindi, widget
 ### Fixed
 - **`onTimeout` could get the app killed as "not responding".** On Android 15+ the

@@ -123,6 +123,11 @@ class SpeedMeterService : Service() {
     private var integratedWifiTx = 0L
     private var attributedSnapshot: Map<Transport, TransferBytes> = emptyMap()
 
+    // Last row actually written: an idle phone must not cost a Room transaction every 15 s.
+    private var lastPersistedUsage: DataUsageEntity? = null
+    private var passesSinceUsageWrite = 0
+    private var lastSavedSpeed: Pair<Long, Long>? = null
+
     // ----- status-bar speed icon + notification throttling -----
     private var cachedSpeedIcon: IconCompat? = null
     private var lastSpeedText = ""
@@ -141,6 +146,8 @@ class SpeedMeterService : Service() {
     private class IconBuffer(val bitmap: Bitmap, val canvas: Canvas, val paint: Paint)
 
     companion object {
+        /** Accounting passes (15 s each) between forced usage writes — ~5 min. */
+        private const val USAGE_FORCE_WRITE_PASSES = 20
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "speed_meter_channel"
 
@@ -656,11 +663,23 @@ class SpeedMeterService : Service() {
         }
 
         try {
-            repository.upsertData(entity)
+            // Write only when the row changed, plus a periodic self-heal write (about every
+            // 5 min) so a row deleted behind the service's back is re-created without traffic.
+            passesSinceUsageWrite++
+            if (entity != lastPersistedUsage || passesSinceUsageWrite >= USAGE_FORCE_WRITE_PASSES) {
+                repository.upsertData(entity)
+                lastPersistedUsage = entity
+                passesSinceUsageWrite = 0
+            }
             _todayUsageFlow.value = entity
-            // Persist the live speed for the next service start (throttled to this loop).
+            // Persist the live speed for the next service start (throttled to this loop,
+            // skipped while unchanged — a DataStore edit rewrites the whole file).
             val live = engine.snapshot()
-            preferencesManager.saveLastSpeed(live.steadyDownloadBps, live.steadyUploadBps)
+            val speedPair = live.steadyDownloadBps to live.steadyUploadBps
+            if (speedPair != lastSavedSpeed) {
+                preferencesManager.saveLastSpeed(speedPair.first, speedPair.second)
+                lastSavedSpeed = speedPair
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }

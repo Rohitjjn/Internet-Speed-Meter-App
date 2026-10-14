@@ -1,5 +1,6 @@
 package com.example.tile
 
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.Intent
 import android.os.Build
@@ -59,6 +60,8 @@ class SpeedMeterTile : TileService() {
         super.onStopListening()
     }
 
+    // The Intent overload is the only one that exists below API 34; the branch is guarded.
+    @SuppressLint("StartActivityAndCollapseDeprecated")
     override fun onClick() {
         super.onClick()
         val intent = Intent(this, MainActivity::class.java).apply {
