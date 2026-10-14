@@ -291,4 +291,5 @@
     <string name="widget_updated">अपडेट %1$s</string>
     <string name="widget_placeholder">—</string>
     <string name="a11y_widget_summary">आज का डेटा उपयोग %1$s। इंटरनेट स्पीड मीटर खोलता है।</string>
+    <string name="settings_motion_forced_by_system">फ़ोन की “एनिमेशन हटाएँ” सेटिंग से चालू है</string>
 </resources>

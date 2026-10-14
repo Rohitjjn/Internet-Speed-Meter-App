@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -146,6 +147,7 @@ class SpeedTestViewModel(
     val history: StateFlow<List<SpeedTestResult>> = preferencesManager.speedTestResultsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    private var confirmationJob: Job? = null
     private var testJob: Job? = null
     private var activeAbort: TestAbortSignal? = null
 
@@ -157,14 +159,16 @@ class SpeedTestViewModel(
      * immediately. Nothing is ever simulated to "make the number look busy".
      */
     fun requestTest() {
-        if (testJob?.isActive == true) return
+        if (testJob?.isActive == true || confirmationJob?.isActive == true ||
+            _state.value.pendingConfirmationMb != null) return
         if (!connectivity.isMetered()) {
             startTest()
             return
         }
         val live = liveSpeed()
-        viewModelScope.launch {
+        confirmationJob = viewModelScope.launch {
             val candidates = loadCandidates()
+            ensureActive() // a dismissed/cancelled lookup must never resurrect the dialog
             _state.update {
                 it.copy(
                     pendingConfirmationMb = TestDataCost.estimateMegabytes(
@@ -180,11 +184,14 @@ class SpeedTestViewModel(
     }
 
     fun dismissConfirmation() {
+        confirmationJob?.cancel()
+        confirmationJob = null
         _state.update { it.copy(pendingConfirmationMb = null, pendingConfirmationDataSaver = false) }
     }
 
     fun confirmStart() {
-        _state.update { it.copy(pendingConfirmationMb = null, pendingConfirmationDataSaver = false) }
+        if (_state.value.pendingConfirmationMb == null) return
+        dismissConfirmation()
         startTest()
     }
 
@@ -193,6 +200,7 @@ class SpeedTestViewModel(
      * engine's sentinel tears the sockets down instead of waiting for a read timeout.
      */
     fun cancelTest() {
+        dismissConfirmation()
         activeAbort?.abort(getApplication<Application>().getString(R.string.test_stopped))
         testJob?.cancel()
         testJob = null
@@ -219,6 +227,7 @@ class SpeedTestViewModel(
 
     fun startTest() {
         if (testJob?.isActive == true) return
+        dismissConfirmation()
         val app = getApplication<Application>()
         val abort = TestAbortSignal()
         activeAbort = abort
@@ -437,6 +446,7 @@ class SpeedTestViewModel(
 
     override fun onCleared() {
         super.onCleared()
+        confirmationJob?.cancel()
         activeAbort?.abort("ViewModel cleared")
         testJob?.cancel()
     }

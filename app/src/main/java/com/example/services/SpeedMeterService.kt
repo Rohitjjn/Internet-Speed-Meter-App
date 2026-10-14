@@ -10,11 +10,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Typeface
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -24,7 +19,6 @@ import android.os.PowerManager
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import androidx.core.graphics.createBitmap
 import androidx.core.graphics.drawable.IconCompat
 import com.example.MainActivity
 import com.example.R
@@ -151,21 +145,8 @@ class SpeedMeterService : Service() {
     private var lastSavedSpeed: Pair<Long, Long>? = null
 
     // ----- status-bar speed icon + notification throttling -----
-    private var cachedSpeedIcon: IconCompat? = null
-    private var lastSpeedText = ""
-    private var lastSpeedUnit = ""
+    private val speedIconRenderer = SpeedIconRenderer()
     private var lastNotificationKey = ""
-
-    /**
-     * Two reusable bitmap/canvas pairs for the status-bar speed glyph. The icon changes on
-     * almost every publish on a fast line, and allocating a fresh 144×144 ARGB bitmap
-     * (~83 KB) once per second is exactly the kind of churn that shows up as battery and
-     * GC pressure. Ping-ponging two buffers keeps it allocation-free.
-     */
-    private val iconBuffers = arrayOfNulls<IconBuffer>(2)
-    private var iconBufferIndex = 0
-
-    private class IconBuffer(val bitmap: Bitmap, val canvas: Canvas, val paint: Paint)
 
     companion object {
         /** Accounting passes (15 s each) between forced usage writes — ~5 min. */
@@ -176,9 +157,6 @@ class SpeedMeterService : Service() {
         /** "Meter paused" — a separate, dismissible notification on its own quiet channel. */
         private const val PAUSED_NOTIFICATION_ID = 1002
         private const val STATUS_CHANNEL_ID = "speed_meter_status"
-
-        /** Status-bar glyph canvas size (px). */
-        private const val ICON_SIZE = 144
 
         const val NETWORK_WIFI = "WIFI"
         const val NETWORK_MOBILE = "MOBILE"
@@ -394,10 +372,7 @@ class SpeedMeterService : Service() {
         _isServiceRunning.value = false
         _liveSpeedFlow.value = LiveSpeed()
         lastNotificationKey = ""
-        cachedSpeedIcon = null
-        lastSpeedText = ""
-        lastSpeedUnit = ""
-        iconBuffers.fill(null)
+
     }
 
     // ============================== NETWORK TYPE (PUSH) ==============================
@@ -859,6 +834,8 @@ class SpeedMeterService : Service() {
                 .setContentTitle(title)
                 .setContentText(text)
                 .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setShowWhen(false)
                 .setCategory(NotificationCompat.CATEGORY_SERVICE)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setContentIntent(openAppIntent())
@@ -892,64 +869,12 @@ class SpeedMeterService : Service() {
 
     private fun openAppIntent(): PendingIntent = openAppPendingIntent(this)
 
-    /**
-     * Custom status-bar icon: the live download speed as text (the signature look
-     * of dedicated speed-meter apps).
-     *
-     * The glyph is redrawn only when the displayed string changes, and it is drawn into one
-     * of two reusable bitmaps — on a fast line the number changes almost every second, and
-     * allocating a fresh 144×144 ARGB bitmap each time is pure churn. Two buffers (not one)
-     * avoid mutating a bitmap a notification may still be showing.
-     */
-    private fun createSpeedIcon(downloadSpeed: Long): IconCompat? {
-        return try {
-            val (text, unit) = SpeedFormatter.split(downloadSpeed, speedUnit)
-            if (text == lastSpeedText && unit == lastSpeedUnit && cachedSpeedIcon != null) {
-                return cachedSpeedIcon
-            }
-
-            val buffer = obtainIconBuffer()
-            val canvas = buffer.canvas
-            canvas.drawColor(Color.TRANSPARENT)
-            val paint = buffer.paint
-
-            // Must stay readable at status-bar size in BOTH display modes (e.g. "842",
-            // "12.4", "104.9") without clipping the 144 px icon canvas.
-            paint.textSize = when (text.length) {
-                1 -> 102f
-                2 -> 87f
-                3 -> 66f
-                4 -> 52f
-                else -> 42f
-            }
-            canvas.drawText(text, ICON_SIZE / 2f, 75f, paint)
-            paint.textSize = 51f
-            canvas.drawText(unit, ICON_SIZE / 2f, 130f, paint)
-
-            val icon = IconCompat.createWithBitmap(buffer.bitmap)
-            cachedSpeedIcon = icon
-            lastSpeedText = text
-            lastSpeedUnit = unit
-            icon
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
-        }
-    }
-
-    /** Round-robins between the two reusable icon buffers (creating them on first use). */
-    private fun obtainIconBuffer(): IconBuffer {
-        iconBufferIndex = (iconBufferIndex + 1) % iconBuffers.size
-        val existing = iconBuffers[iconBufferIndex]
-        if (existing != null) return existing
-        val bitmap = createBitmap(ICON_SIZE, ICON_SIZE)
-        val created = IconBuffer(bitmap, Canvas(bitmap), Paint().apply {
-            color = Color.WHITE
-            isAntiAlias = true
-            textAlign = Paint.Align.CENTER
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-        })
-        iconBuffers[iconBufferIndex] = created
-        return created
+    /** Cached by displayed value; transparent background, no adaptive-icon mask. */
+    private fun createSpeedIcon(downloadSpeed: Long): IconCompat? = try {
+        val (text, unit) = SpeedFormatter.split(downloadSpeed, speedUnit)
+        IconCompat.createWithBitmap(speedIconRenderer.render(text, unit))
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
     }
 }

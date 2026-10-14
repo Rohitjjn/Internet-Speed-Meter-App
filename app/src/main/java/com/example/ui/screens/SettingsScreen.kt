@@ -99,6 +99,7 @@ import com.example.ui.theme.SpeedDownDark
 import com.example.ui.theme.SpeedUp
 import com.example.ui.theme.SpeedUpDark
 import com.example.ui.theme.glassBorder
+import com.example.ui.theme.LocalSystemReducedMotion
 import com.example.ui.theme.glassColor
 import com.example.ui.theme.isDarkModeActive
 import com.example.ui.util.secondary
@@ -377,13 +378,14 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onBackground
                             )
                             Text(
-                                text = stringResource(R.string.settings_reduced_motion_hint),
+                                text = stringResource(if (LocalSystemReducedMotion.current) R.string.settings_motion_forced_by_system else R.string.settings_reduced_motion_hint),
                                 fontSize = 11.sp,
                                 color = secondary()
                             )
                         }
                         Switch(
-                            checked = reducedMotion,
+                            checked = reducedMotion || LocalSystemReducedMotion.current,
+                            enabled = !LocalSystemReducedMotion.current,
                             onCheckedChange = { viewModel.setReducedMotion(it) },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = MaterialTheme.colorScheme.onPrimary,

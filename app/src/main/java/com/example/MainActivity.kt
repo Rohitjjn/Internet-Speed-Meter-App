@@ -9,6 +9,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -27,6 +28,8 @@ import com.example.ui.screens.MainScreen
 import com.example.ui.screens.SplashScreen
 import com.example.ui.theme.AccentTheme
 import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.theme.isReducedMotion
+import com.example.ui.theme.applyMeterSystemBars
 import kotlinx.coroutines.launch
 
 enum class AppStage {
@@ -64,6 +67,8 @@ class MainActivity : ComponentActivity() {
             val customDarkMode by preferencesManager.isDarkModeFlow.collectAsState(initial = null)
             val isSystemDark = isSystemInDarkTheme()
             val darkThemeActive = customDarkMode ?: isSystemDark
+            // Follow the APP override, not just the phone's current theme.
+            SideEffect { applyMeterSystemBars(darkThemeActive) }
 
             val isOnboardingCompleted by preferencesManager.isOnboardingCompletedFlow.collectAsState(initial = false)
             val accentKey by preferencesManager.accentKeyFlow.collectAsState(initial = "INK")
@@ -75,6 +80,7 @@ class MainActivity : ComponentActivity() {
                 accent = AccentTheme.fromKey(accentKey),
                 reducedMotion = reducedMotion
             ) {
+                val effectiveReducedMotion = isReducedMotion()
                 Surface(modifier = Modifier.fillMaxSize()) {
                     var currentStage by remember { mutableStateOf(AppStage.SPLASH) }
 
@@ -92,7 +98,7 @@ class MainActivity : ComponentActivity() {
 
                     Crossfade(
                         targetState = currentStage,
-                        animationSpec = tween(durationMillis = 550),
+                        animationSpec = tween(durationMillis = if (effectiveReducedMotion) 0 else 550),
                         label = "app_stage_crossfade"
                     ) { stage ->
                         when (stage) {
