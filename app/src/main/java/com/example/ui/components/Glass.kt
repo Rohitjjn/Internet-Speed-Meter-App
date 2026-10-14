@@ -73,6 +73,22 @@ fun AppBackground(modifier: Modifier = Modifier) {
                     Brush.radialGradient(listOf(mint.copy(alpha = 0.7f), mint.copy(alpha = 0f)))
                 )
         )
+        // Restore the soft white rounded ambient light in dark mode. It lives behind
+        // the cards, below the status bar, rather than changing their text contrast.
+        if (dark) {
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 100.dp, y = 96.dp)
+                    .size(360.dp)
+                    .background(
+                        Brush.radialGradient(
+                            listOf(Color.White.copy(alpha = 0.14f), Color.White.copy(alpha = 0f))
+                        ),
+                        RoundedCornerShape(50)
+                    )
+            )
+        }
     }
 }
 

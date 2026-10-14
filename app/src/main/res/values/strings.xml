@@ -291,4 +291,5 @@
     <string name="widget_updated">Updated %1$s</string>
     <string name="widget_placeholder">—</string>
     <string name="a11y_widget_summary">Today\'s data usage %1$s. Opens Internet Speed Meter.</string>
+    <string name="settings_motion_forced_by_system">Enabled by your phone’s Remove animations setting</string>
 </resources>

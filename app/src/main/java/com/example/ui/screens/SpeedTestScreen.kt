@@ -71,6 +71,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.ui.theme.motionDuration
 import com.example.R
 import com.example.data.SpeedTestResult
 import com.example.services.SpeedTestEngine
@@ -251,6 +252,8 @@ private class GaugePalette(val down: Color, val up: Color, val live: Color)
 
 @Composable
 private fun GaugeCard(state: SpeedTestState, palette: GaugePalette) {
+    val phaseEnterMillis = motionDuration(240)
+    val phaseExitMillis = motionDuration(140)
     GlassCard(modifier = Modifier.fillMaxWidth().testTag("speed_test_gauge_card")) {
         Column(
             modifier = Modifier
@@ -265,8 +268,8 @@ private fun GaugeCard(state: SpeedTestState, palette: GaugePalette) {
             AnimatedContent(
                 targetState = state.phase,
                 transitionSpec = {
-                    fadeIn(animationSpec = tween(240)) togetherWith
-                        fadeOut(animationSpec = tween(140))
+                    fadeIn(animationSpec = tween(phaseEnterMillis)) togetherWith
+                        fadeOut(animationSpec = tween(phaseExitMillis))
                 },
                 label = "speed_test_phase_crossfade"
             ) { phase ->
@@ -708,7 +711,7 @@ private fun PhaseProgressBar(state: SpeedTestState, accent: Color) {
     val progress = if (state.phase == SpeedTestPhase.DONE) 1f else state.phaseProgress.coerceIn(0f, 1f)
     val animated by animateFloatAsState(
         targetValue = progress,
-        animationSpec = tween(durationMillis = 220),
+        animationSpec = tween(durationMillis = motionDuration(220)),
         label = "speed_test_phase_progress"
     )
     Box(
@@ -758,13 +761,13 @@ private fun SpeedGauge(state: SpeedTestState, palette: GaugePalette) {
     }
     val needleFraction by animateFloatAsState(
         targetValue = targetFraction,
-        animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = motionDuration(520), easing = FastOutSlowInEasing),
         label = "speed_test_needle"
     )
     val showGhost = ghostMbps != null && state.phase != SpeedTestPhase.PING
     val ghostFraction by animateFloatAsState(
         targetValue = if (showGhost) ((ghostMbps ?: 0f) / ceilingMbps).coerceIn(0f, 1f) else 0f,
-        animationSpec = tween(durationMillis = 700, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = motionDuration(700), easing = FastOutSlowInEasing),
         label = "speed_test_ghost_needle"
     )
 
@@ -1011,12 +1014,12 @@ private fun MetricTile(
 ) {
     val animatedBits by animateFloatAsState(
         targetValue = (bitsPerSecond ?: 0.0).toFloat(),
-        animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = motionDuration(520), easing = FastOutSlowInEasing),
         label = "${testTag}_value"
     )
     val animatedLatency by animateFloatAsState(
         targetValue = (latencyMs ?: 0L).toFloat(),
-        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = motionDuration(420), easing = FastOutSlowInEasing),
         label = "${testTag}_latency"
     )
 

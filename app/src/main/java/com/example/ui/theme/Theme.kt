@@ -65,6 +65,10 @@ val LocalReducedMotion = staticCompositionLocalOf { false }
 @Composable
 fun isReducedMotion(): Boolean = LocalReducedMotion.current
 
+/** Duration helper for finite decorative transitions; never changes engine timings. */
+@Composable
+fun motionDuration(normalMillis: Int): Int = if (isReducedMotion()) 0 else normalMillis
+
 @Composable
 fun isDarkModeActive(): Boolean = LocalDarkTheme.current
 
@@ -118,6 +122,7 @@ fun MyApplicationTheme(
     reducedMotion: Boolean = false,
     content: @Composable () -> Unit,
 ) {
+    val systemReducedMotion = rememberSystemReducedMotion()
     val isDark = darkTheme
     val base = if (isDark) DarkColors else LightColors
     val scheme = if (accent == AccentTheme.SYSTEM) {
@@ -135,7 +140,8 @@ fun MyApplicationTheme(
                 LocalGlassBorder provides (if (isDark) DarkBorder else LightBorder),
                 LocalGlassHighlight provides (if (isDark) DarkHighlight else LightHighlight),
                 LocalDarkTheme provides isDark,
-                LocalReducedMotion provides reducedMotion,
+                LocalReducedMotion provides (reducedMotion || systemReducedMotion),
+                LocalSystemReducedMotion provides systemReducedMotion,
             ) {
                 content()
             }

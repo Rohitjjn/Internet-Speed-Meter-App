@@ -29,14 +29,16 @@ Material 3, no third-party SDKs, everything on-device.
    cards, soft top highlight, ambient glow blobs) with a full dark variant, an accent
    picker (plus the wallpaper/Material You primary on Android 12+), ink (inverse) accent
    cards, monospace numerals and animated digits — with a *reduce motion* switch that
-   turns the choreography off.
+   turns the choreography off, also respecting the OS Remove animations setting without
+   overwriting the user's preference. Dark mode includes a soft white rounded ambient glow;
+   system-bar contrast follows the app theme, not just the system theme.
 6. **Durable background** — `dataSync` FGS; `onTimeout` stops the service at once and
    hands over to a one-shot WorkManager retry (30 min, exponential back-off 10 → 20 → 40 min
    on `Result.retry()`); 60-minute watchdog; boot receiver restart. An inline restart from
    the background is refused on API 35+ anyway, so none is attempted. Every restart path
    first asks `MeterControl` whether the user paused the meter.
 7. **Everything localizable** — every user-facing string is a resource in `values/` with a
-   Hindi counterpart in `values-hi/` (267 keys); `StringResourceParityTest` fails the build
+   Hindi counterpart in `values-hi/` (268 keys); `StringResourceParityTest` fails the build
    when a key or a format argument is missing on either side. Technical identifiers that
    are the same in every language (host names, `Mbps`, `KB/s`, HTTP codes, `/proc/net/dev`)
    stay literal on purpose.
@@ -67,7 +69,7 @@ TodayUsageWidget (AppWidgetProvider, RemoteViews)
 
 SpeedMeterTile (TileService, Quick Settings)
 ├── state = meter running (ACTIVE) / not running (INACTIVE)
-└── subtitle (API 29+) = today's persisted total, "Measuring", "Meter paused" or
+└── subtitle (API 29+) = today's same-day accounting snapshot (Room fallback), "Measuring", "Meter paused" or
     "Paused by you"; tap opens app
 
 MeterControl (object)
@@ -123,7 +125,8 @@ Supporting
 ├── WorkManager SpeedKeepAliveWorker (60 min; retries with back-off and posts the paused
 │   notice when the OS refuses the start) + BootCompletedReceiver (same refusal path)
 ├── CsvExport — FileProvider (${applicationId}.fileprovider, cache/exports/) share of the
-│   UsageCsv / SpeedTestCsv text as a .csv attachment, plain-text fallback
+│   UsageCsv / SpeedTestCsv text as a .csv attachment, plain-text fallback;
+│   next export removes only owned CSV files older than 24 h
 └── DataStore — theme, accent, reduced motion, speed unit, daily + monthly limit,
                 onboarding, reset baseline, alert dismissals (day / month), last known
                 speed, speed-test results, meter_paused_by_user
@@ -173,17 +176,24 @@ Supporting
   `primary`/`onPrimary`; System = `dynamicLight/DarkColorScheme` primary on API 31+, Ink
   below) and `CompositionLocal`s (`LocalGlassColor/Border/Highlight`, `LocalDarkTheme`,
   `LocalReducedMotion`) consumed by the glass components; `isDarkModeActive()` /
-  `isReducedMotion()` helpers.
-- `components/Glass.kt` — `AppBackground` (ambient glows), `GlassCard`
+  `isReducedMotion()` / `motionDuration()` helpers. `SystemMotion.kt` observes the global
+  animator duration scale; effective reduction = user setting OR system disabled, with
+  observer disposal and a system-forced Settings label. No persistent OS-setting mirror.
+- `SystemBars.kt` — `MainActivity` reapplies edge-to-edge styles whenever the effective
+  theme changes: light icons on dark surfaces, dark icons on light surfaces, older-device
+  navigation scrims retained. The app does not control Android's notification-shade colour.
+- `components/Glass.kt` — `AppBackground` (ambient glows + dark-mode white rounded light), `GlassCard`
   (shadow → clip → fill → 1 dp border → top highlight), `GlassChip`.
 - Motion: hero digit roll (`animateFloatAsState`), instrument gauge (needle sweep over a
   labelled tick scale, ghost needle for the previous result), phase-label cross-fade +
   animated metric readouts, phase progress bar, breathing "waiting" label, nav pill width
   animation, collapsible Settings groups and History day rows (`AnimatedVisibility` +
   rotating chevron), cross-fade between app stages. *Reduce motion* disables the splash
-  zoom/fade, the breathing label and the digit roll.
+  zoom/fade, breathing label, digit roll and finite decorative transitions listed above
+  (including intro dots and page navigation); measurement timing is unaffected.
 - Layout: single column on phones, two columns from 600 dp (Dashboard, Test, History),
-  text kept in the glass-card rhythm.
+  text kept in the glass-card rhythm. MainScreen consumes top/horizontal safe-drawing
+  insets, the floating nav handles bottom insets, and content shrinks above the keyboard.
 - Accessibility: value texts carry `contentDescription`s (never a `mergeDescendants`
   container around test-tagged children), polite live regions on phase/status labels and
   result/error cards, `Role` + `selected` on pickers, `stateDescription` on the pause
@@ -200,8 +210,14 @@ Supporting
   a refused start is surfaced as the "Speed meter paused" notification, never swallowed.
 - API 35 `dataSync` budget exhaustion makes `startForeground` throw → same paused notice;
   the service stops itself instead of running un-promoted.
-- Notification icon: white-on-transparent bitmap (alpha = mask), cached per distinct
-  speed string; the whole notification is skipped when nothing visible changed.
+- Notification icon: `SpeedIconRenderer`, 96×96 white-on-transparent alpha mask, two
+  independently fitted text rows. Cached by number AND unit. Never redraw a published
+  bitmap; transparent SRC_OVER on reused buffers previously accumulated glyphs into a box.
+  Native-graphics tests compare pixels after 100 updates and check transparent margins.
+  Notification updates are quiet (`onlyAlertOnce`, no changing timestamp).
+- Metered test confirmation: a dedicated lookup Job plus the visible-prompt guard prevent
+  double taps. Dismiss/stop cancel the lookup; an explicit cancellation check prevents a
+  late DataStore result from resurrecting the dialog. A stale confirm is a no-op.
 - A NetworkCallback may be dropped by some OEM ROMs → the ticker re-resolves the
   transport every 60 reads (30 s on-screen, 2 min screen-off).
 - `ACTION_SCREEN_ON/OFF` are protected system broadcasts: registered at runtime with

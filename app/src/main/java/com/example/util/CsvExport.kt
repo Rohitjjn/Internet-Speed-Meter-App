@@ -21,6 +21,7 @@ object CsvExport {
     fun share(context: Context, csv: String, fileName: String, subject: String, chooserTitle: String) {
         val intent = try {
             val dir = File(context.cacheDir, EXPORT_DIR).apply { mkdirs() }
+            pruneExpired(dir)
             val file = File(dir, fileName)
             file.writeText(csv)
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
@@ -46,6 +47,17 @@ object CsvExport {
         } catch (e: Exception) {
             // No share target is not an error worth crashing for.
             e.printStackTrace()
+        }
+    }
+
+    /** Best-effort cleanup of our CSVs only; keep recent shares available for a day. */
+    internal fun pruneExpired(dir: File, nowMillis: Long = System.currentTimeMillis()) {
+        val cutoff = nowMillis - 24 * 60 * 60 * 1000L
+        dir.listFiles()?.forEach { file ->
+            if (file.isFile && file.name.startsWith("speed-meter-") && file.extension == "csv" &&
+                file.lastModified() in 1 until cutoff) {
+                file.delete()
+            }
         }
     }
 

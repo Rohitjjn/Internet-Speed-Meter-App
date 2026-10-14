@@ -57,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.ui.theme.motionDuration
 import com.example.R
 import com.example.data.DataUsageEntity
 import com.example.ui.components.AppBackground
@@ -457,7 +458,7 @@ fun HistoryRowItem(
                     )
                     val chevronRotation by animateFloatAsState(
                         targetValue = if (expanded) 180f else 0f,
-                        animationSpec = tween(200),
+                        animationSpec = tween(motionDuration(200)),
                         label = "history_chevron"
                     )
                     AppIcon(
@@ -473,8 +474,8 @@ fun HistoryRowItem(
 
             AnimatedVisibility(
                 visible = expanded,
-                enter = expandVertically(animationSpec = tween(200)) + fadeIn(tween(200)),
-                exit = shrinkVertically(animationSpec = tween(160)) + fadeOut(tween(120))
+                enter = expandVertically(animationSpec = tween(motionDuration(200))) + fadeIn(tween(motionDuration(200))),
+                exit = shrinkVertically(animationSpec = tween(motionDuration(160))) + fadeOut(tween(motionDuration(120)))
             ) {
                 Column(modifier = Modifier.padding(top = 12.dp).testTag("history_detail_${item.date}")) {
                     HorizontalDivider(color = glassBorder.copy(alpha = 0.5f))

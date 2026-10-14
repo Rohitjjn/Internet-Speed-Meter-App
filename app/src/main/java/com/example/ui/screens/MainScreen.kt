@@ -5,6 +5,8 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -14,6 +16,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -54,6 +61,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.ui.theme.motionDuration
 import com.example.R
 import com.example.data.AppDatabase
 import com.example.data.DataUsageRepository
@@ -78,6 +86,7 @@ sealed class Screen(val route: String, val title: String) {
 
 @Composable
 fun MainScreen() {
+    val pageTransitionMillis = motionDuration(220)
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
@@ -251,7 +260,8 @@ fun MainScreen() {
         modifier = Modifier
             .fillMaxSize()
             .testTag("main_screen_scaffold"),
-        contentWindowInsets = WindowInsets(0, 0, 0, 0), // full-bleed, glass nav floats above insets
+        // Keep headings away from clocks/cutouts; the floating nav handles bottom insets.
+        contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
         bottomBar = {
             FloatingGlassNavBar(
                 currentRoute = currentRoute,
@@ -272,12 +282,16 @@ fun MainScreen() {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(bottom = innerPadding.calculateBottomPadding())
+                .padding(innerPadding)
+                .consumeWindowInsets(innerPadding)
+                .imePadding()
                 .testTag("screen_content_host")
         ) {
             NavHost(
                 navController = navController,
                 startDestination = Screen.Dashboard.route,
+                enterTransition = { fadeIn(tween(pageTransitionMillis)) },
+                exitTransition = { fadeOut(tween(pageTransitionMillis)) },
                 modifier = Modifier.fillMaxSize()
             ) {
                 composable(Screen.Dashboard.route) { DashboardScreen() }
@@ -310,6 +324,7 @@ private fun FloatingGlassNavBar(
         modifier = Modifier
             .fillMaxWidth()
             .windowInsetsPadding(WindowInsets.navigationBars)
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
             .padding(start = 20.dp, end = 20.dp, bottom = 14.dp, top = 8.dp)
             .testTag("glassy_bottom_nav_container")
     ) {
@@ -333,7 +348,7 @@ private fun FloatingGlassNavBar(
                 val isSelected = currentRoute == screen.route
                 val pillWidth by animateDpAsState(
                     targetValue = if (isSelected) 72.dp else 56.dp,
-                    animationSpec = tween(durationMillis = 260),
+                    animationSpec = tween(durationMillis = motionDuration(260)),
                     label = "nav_pill_${screen.route}"
                 )
                 Box(

@@ -164,11 +164,34 @@ update period re-renders it too. Tapping it opens the app.
 
 **Speed Meter** can be added to the notification shade. It is a launcher, not a live
 meter: its state mirrors whether the meter is running and its subtitle (Android 10+) is
-today's **persisted** total — the row the service wrote from OS counters — or "Meter
-paused" / "Paused by you". It never shows a speed, because a tile cannot follow one without
-keeping the process awake.
+today's **accounting snapshot** — the running service's same-day row, otherwise the
+persisted row from OS counters — or "Meter paused" / "Paused by you". It never shows a
+speed, because a tile cannot follow one without keeping the process awake.
 
 ---
+
+## Display fixes (loop 7)
+
+The speed icon is a **white alpha mask on a transparent background**, tinted by Android.
+It is cached until the displayed value/unit changes; a published bitmap is never redrawn.
+This fixes the accumulated-glyph "box" caused by clearing rotating buffers with transparent
+`SRC_OVER` (which does not erase pixels). Values and units are fitted independently, including
+`104.9`, `MB/s` and `Mbps`.
+
+The app's dark-mode override now updates both system bars immediately, even when the phone
+uses the opposite theme. The notification **shade itself is owned by Android**: the app
+uses the standard notification template, not a hard-coded dark custom layout. If an OEM
+hides notification icons or notification permission is disabled, the app cannot override
+that system setting. Main-screen content respects clock/cutout and keyboard insets.
+
+Reduce motion observes the OS animator-duration setting while the UI is open. The Settings
+switch shows when the system forces it on, without overwriting your saved preference.
+Splash/digits, gauge/metrics, collapsible cards, stage/page fades, intro dots and nav pills
+honour it; actual sampling and speed-test timings never change.
+
+Repeated Start taps cannot create multiple metered confirmation lookups or reopen a dismissed
+one. On the next CSV export, app-owned CSV files older than 24 hours are removed from the
+private export cache; recent shared files and unrelated files are left alone.
 
 ## Features
 
@@ -188,10 +211,12 @@ keeping the process awake.
 - 🎚 Optional daily **and monthly** mobile **warning** limits (MB/GB) — one alert each at
   50 % / 90 % / 100 % with a buzz; the app never blocks data
 - 🌗 Glassy light + dark theme (GPT-style glassmorphism) + accent picker, including a
-  **wallpaper (Material You) accent** on Android 12+, and a **reduce motion** switch
-- 🔔 Status-bar notification with live speed + custom speed glyph icon
+  **wallpaper (Material You) accent** on Android 12+, a soft white rounded glow in dark
+  mode, and **reduce motion** (also honours the phone's Remove animations setting)
+- 🔔 Status-bar notification with live speed + transparent, fitted number/unit glyphs;
+  clock, battery and navigation icons follow the app's effective light/dark theme
 - 🌐 Fully localizable: **every** user-facing string lives in `values/strings.xml` with a
-  Hindi counterpart in `values-hi/` (267 keys, parity enforced by `StringResourceParityTest`)
+  Hindi counterpart in `values-hi/` (268 keys, parity enforced by `StringResourceParityTest`)
 - ♿ Accessibility: content descriptions on the live numbers, the gauge and every icon
   button; polite live regions for phase/status changes; selection and state semantics on
   pickers and switches ("paused by you" / "running", expanded / collapsed); no text below

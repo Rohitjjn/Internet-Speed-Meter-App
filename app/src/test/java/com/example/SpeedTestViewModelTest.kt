@@ -92,6 +92,43 @@ class SpeedTestViewModelTest {
         state.first { it.phase in phases }
 
     @Test
+    fun repeatedRequestsKeepOneConfirmationAndOneEstimate() = runTest(dispatcher) {
+        connectivity.metered = true
+        var snapshots = 0
+        val vm = SpeedTestViewModel(application, connectivity, runner, preferences) {
+            snapshots++
+            LiveSpeed(steadyDownloadBps = 2_500_000L)
+        }
+        vm.requestTest()
+        vm.requestTest() // lookup is queued, dialog not yet visible
+        val asked = vm.state.first { it.pendingConfirmationMb != null }
+        vm.requestTest() // already displayed
+        assertEquals(1, snapshots)
+        assertEquals(asked.pendingConfirmationMb, vm.state.value.pendingConfirmationMb)
+        assertEquals(0, runner.latencyCalls)
+        vm.confirmStart()
+        vm.confirmStart() // a stale second confirmation is harmless
+        vm.awaitPhase(SpeedTestPhase.DONE, SpeedTestPhase.ERROR)
+        assertEquals(1, runner.latencyCalls)
+    }
+
+    @Test
+    fun dismissingQueuedLookupDoesNotResurrectConfirmation() = runTest(dispatcher) {
+        connectivity.metered = true
+        val vm = viewModel()
+        vm.requestTest()
+        vm.dismissConfirmation()
+        advanceUntilIdle()
+        assertNull(vm.state.value.pendingConfirmationMb)
+        vm.confirmStart() // no visible confirmation means no permission to run
+        assertEquals(0, runner.latencyCalls)
+        vm.requestTest()
+        vm.state.first { it.pendingConfirmationMb != null }
+        vm.cancelTest()
+        assertNull(vm.state.value.pendingConfirmationMb)
+    }
+
+    @Test
     fun meteredConnectionAsksBeforeSpendingData() = runTest(dispatcher) {
         connectivity.metered = true
         connectivity.transport = Transport.MOBILE

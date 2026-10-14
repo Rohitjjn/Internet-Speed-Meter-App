@@ -79,6 +79,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.ui.theme.motionDuration
 import com.example.R
 import com.example.services.SpeedMeterService
 import com.example.services.SpeedTestServers
@@ -99,6 +100,7 @@ import com.example.ui.theme.SpeedDownDark
 import com.example.ui.theme.SpeedUp
 import com.example.ui.theme.SpeedUpDark
 import com.example.ui.theme.glassBorder
+import com.example.ui.theme.LocalSystemReducedMotion
 import com.example.ui.theme.glassColor
 import com.example.ui.theme.isDarkModeActive
 import com.example.ui.util.secondary
@@ -377,13 +379,14 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onBackground
                             )
                             Text(
-                                text = stringResource(R.string.settings_reduced_motion_hint),
+                                text = stringResource(if (LocalSystemReducedMotion.current) R.string.settings_motion_forced_by_system else R.string.settings_reduced_motion_hint),
                                 fontSize = 11.sp,
                                 color = secondary()
                             )
                         }
                         Switch(
-                            checked = reducedMotion,
+                            checked = reducedMotion || LocalSystemReducedMotion.current,
+                            enabled = !LocalSystemReducedMotion.current,
                             onCheckedChange = { viewModel.setReducedMotion(it) },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
@@ -838,8 +841,8 @@ fun SettingsScreen(
                     )
                     AnimatedVisibility(
                         visible = serverCardExpanded,
-                        enter = expandVertically(animationSpec = tween(220)) + fadeIn(tween(220)),
-                        exit = shrinkVertically(animationSpec = tween(180)) + fadeOut(tween(120))
+                        enter = expandVertically(animationSpec = tween(motionDuration(220))) + fadeIn(tween(motionDuration(220))),
+                        exit = shrinkVertically(animationSpec = tween(motionDuration(180))) + fadeOut(tween(motionDuration(120)))
                     ) {
                         Column(
                             modifier = Modifier.padding(top = 12.dp),
@@ -1004,8 +1007,8 @@ fun SettingsScreen(
                     )
                     AnimatedVisibility(
                         visible = engineCardExpanded,
-                        enter = expandVertically(animationSpec = tween(220)) + fadeIn(tween(220)),
-                        exit = shrinkVertically(animationSpec = tween(180)) + fadeOut(tween(120))
+                        enter = expandVertically(animationSpec = tween(motionDuration(220))) + fadeIn(tween(motionDuration(220))),
+                        exit = shrinkVertically(animationSpec = tween(motionDuration(180))) + fadeOut(tween(motionDuration(120)))
                     ) {
                         Column(
                             modifier = Modifier.padding(top = 12.dp),
@@ -1164,7 +1167,7 @@ private fun CollapsibleHeader(
 ) {
     val rotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
-        animationSpec = tween(durationMillis = 220),
+        animationSpec = tween(durationMillis = motionDuration(220)),
         label = "${testTag}_chevron"
     )
     val toggleLabel = if (expanded) stringResource(R.string.a11y_collapse) else stringResource(R.string.a11y_expand)
