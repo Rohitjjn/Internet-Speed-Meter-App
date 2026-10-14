@@ -239,6 +239,9 @@ class SpeedEngine(
         sessionStartMs = sample.atMs
         sessionStarted = true
         seed(sample)
+        // Readers (notification, widget, dashboard) must see the cleared totals at once,
+        // not the pre-reset snapshot until the next publish tick.
+        publishSnapshot()
     }
 
     /**

@@ -24,6 +24,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -256,7 +257,9 @@ class SpeedTestViewModelTest {
         vm.startTest()
         vm.awaitPhase(SpeedTestPhase.DOWNLOAD)
         vm.cancelTest()
-        // Let the cancelled job unwind.
+        // cancelTest() resets the state synchronously; the cancelled job itself unwinds
+        // on the test scheduler — run it so the fake's finally block gets to observe.
+        advanceUntilIdle()
         vm.state.first { it.phase == SpeedTestPhase.IDLE }
 
         assertEquals(SpeedTestPhase.IDLE, vm.state.value.phase)

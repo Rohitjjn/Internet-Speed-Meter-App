@@ -898,8 +898,10 @@ private fun SpeedGauge(state: SpeedTestState, palette: GaugePalette) {
  */
 internal fun niceCeilingMbps(observedMbps: Float): Float {
     val candidates = floatArrayOf(10f, 25f, 50f, 100f, 250f, 500f, 1000f, 2500f)
-    val target = (observedMbps * 1.15f).coerceAtLeast(10f)
-    // Powers-of-ten rounding keeps the label digits short (10/25/50/100/250/500/1000).
+    // The smallest calibrated step that holds the observed maximum (10 Mbps floor). No
+    // extra headroom factor: 95 Mbps on a 100 dial reads as "fast", on a 250 dial as
+    // "weak" — and the dial re-scales the moment a reading exceeds the step anyway.
+    val target = observedMbps.coerceAtLeast(10f)
     return candidates.firstOrNull { it >= target } ?: candidates.last()
 }
 
