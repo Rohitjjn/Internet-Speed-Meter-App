@@ -1,10 +1,19 @@
 name: Android Build & Release
 
-# Manual workflow: fill/select the inputs in the Actions UI, click
-# "Run workflow" — it builds the APK and (optionally) uploads it to a
-# GitHub release.
+# Two ways in:
+#  * every push runs the unit tests and (non-blocking) lint, and publishes a condensed,
+#    API-readable "Unit test log" / "Lint log" check run on the commit;
+#  * "Run workflow" (manual dispatch) additionally builds the APK and (optionally)
+#    uploads it to a GitHub release — those inputs are required for the build job.
 
 on:
+  push:
+    branches:
+      - "**"
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
   workflow_dispatch:
     inputs:
       build_type:
@@ -47,8 +56,15 @@ on:
           - "no"
         default: "yes"
 
+# A newer push to the same branch cancels the still-running test/lint jobs; manual
+# release builds are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
 permissions:
   contents: write
+  checks: write
 
 jobs:
   # ---------------- Unit tests ----------------
@@ -56,9 +72,9 @@ jobs:
     name: Unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
@@ -84,10 +100,38 @@ jobs:
           yes | "$CMD" --licenses || true
           yes | "$CMD" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
 
       - name: Run unit tests
-        run: ./gradlew :app:testDebugUnitTest --stacktrace
+        id: tests
+        run: |
+          set -o pipefail
+          ./gradlew :app:testDebugUnitTest --stacktrace --console=plain 2>&1 | tee gradle-test.log
+
+      # Condensed, API-readable result (compile errors, failed tests with assertions,
+      # Gradle "what went wrong") as a check run on the commit + inline annotations.
+      - name: Publish test log
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 .github/scripts/publish_check.py \
+            --name "Unit test log" \
+            --log gradle-test.log \
+            --results app/build/test-results/testDebugUnitTest \
+            --outcome "${{ steps.tests.outcome }}"
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: unit-test-reports
+          path: |
+            gradle-test.log
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/test-results/testDebugUnitTest/
+          if-no-files-found: ignore
+          retention-days: 14
 
   # ---------------- Lint (informational, never blocks a release) ----------------
   lint:
@@ -95,9 +139,9 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
@@ -122,31 +166,51 @@ jobs:
           yes | "$CMD" --licenses || true
           yes | "$CMD" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
 
       # Catches permission/typo/API regressions early. The step is allowed to fail so a
       # lint warning can never stop an APK from being built.
       - name: Lint release variant
+        id: lint
         continue-on-error: true
-        run: ./gradlew :app:lintRelease --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew :app:lintRelease --stacktrace --console=plain 2>&1 | tee gradle-lint.log
+
+      - name: Publish lint log
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 .github/scripts/publish_check.py \
+            --name "Lint log" \
+            --log gradle-lint.log \
+            --lint app/build/reports/lint-results-release.xml \
+            --outcome "${{ steps.lint.outcome }}" \
+            --neutral
 
       - name: Upload lint report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: lint-report
-          path: app/build/reports/lint-results-*.html
+          path: |
+            gradle-lint.log
+            app/build/reports/lint-results-*.html
+            app/build/reports/lint-results-*.xml
           if-no-files-found: ignore
           retention-days: 14
 
   # ---------------- Build + release ----------------
   build:
     name: Build APK (${{ inputs.build_type }})
+    # Only the manual "Run workflow" path builds/releases; pushes just test + lint.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
@@ -171,7 +235,7 @@ jobs:
           yes | "$CMD" --licenses || true
           yes | "$CMD" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
 
       # Release builds are always signed: either with the repo's upload key
       # (KEYSTORE_BASE64 secret, base64 of a .jks) or a throwaway key when
@@ -224,7 +288,7 @@ jobs:
           ls -la dist
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: speed-meter-${{ inputs.build_type }}-v${{ inputs.version_name }}
           path: dist/
