@@ -17,6 +17,30 @@ class SpeedTestMathTest {
 
     private val ms = 1_000_000L // ns per ms
 
+    // ------------------------------------------------------------------ request sizing
+
+    @Test
+    fun aQuicklyFinishedRequestDoublesTheNextOneUpToTheCap() {
+        val start = SpeedTestEngine.INITIAL_REQUEST_BYTES
+        // Gigabit line: the 20 MB body was read in 180 ms → ask for 40 MB next.
+        assertEquals(start * 2, SpeedTestEngine.nextRequestBytes(start, completedInMs = 180L, bodyComplete = true))
+        // Keeps doubling while requests stay fast, never beyond the cap.
+        var size = start
+        repeat(10) { size = SpeedTestEngine.nextRequestBytes(size, 100L, true) }
+        assertEquals(SpeedTestEngine.MAX_REQUEST_BYTES, size)
+    }
+
+    @Test
+    fun aSlowOrCutOffRequestKeepsItsSize() {
+        val start = SpeedTestEngine.INITIAL_REQUEST_BYTES
+        // 20 MB took 2.4 s: the pipe is already busy, no need for a bigger body.
+        assertEquals(start, SpeedTestEngine.nextRequestBytes(start, completedInMs = 2_400L, bodyComplete = true))
+        // Cut off by the deadline after 300 ms: that says nothing about the line.
+        assertEquals(start, SpeedTestEngine.nextRequestBytes(start, completedInMs = 300L, bodyComplete = false))
+        // Exactly the threshold is not "fast".
+        assertEquals(start, SpeedTestEngine.nextRequestBytes(start, SpeedTestEngine.FAST_REQUEST_MS, true))
+    }
+
     // ------------------------------------------------------------------ throughput window
 
     @Test

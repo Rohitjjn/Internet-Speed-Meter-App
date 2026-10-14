@@ -17,7 +17,9 @@ import java.util.concurrent.TimeUnit
  * Keeps the meter alive through OS restraints:
  *  - Android 14/15+ may block background FGS starts (e.g. from BOOT_COMPLETED
  *    on API 35+), and Android 15+ caps the dataSync budget at ~6 h/day.
- *  - A 60-minute watchdog restarts the service if it was ever stopped.
+ *  - A 60-minute watchdog restarts the service if it was ever stopped — and when the OS
+ *    refuses the restart it posts the "meter paused" notification instead of failing
+ *    silently (the user would otherwise believe the meter is still counting).
  */
 class SpeedKeepAliveWorker(
     context: Context,
@@ -25,15 +27,16 @@ class SpeedKeepAliveWorker(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
-        if (!SpeedMeterService.isServiceRunning.value) {
-            try {
-                SpeedMeterService.startService(applicationContext)
-            } catch (e: Exception) {
-                return Result.retry()
-            }
-            delay(4_000L) // give the service time to come up
-        }
-        return if (SpeedMeterService.isServiceRunning.value) Result.success() else Result.retry()
+        if (SpeedMeterService.isServiceRunning.value) return Result.success()
+        val accepted = SpeedMeterService.startService(applicationContext)
+        if (accepted) delay(4_000L) // give the service time to come up (and to be refused)
+        if (SpeedMeterService.isServiceRunning.value) return Result.success()
+        // A worker runs in the background, and Android 12+ lets a background app start a
+        // foreground service only after a user interaction (Android 15+ also refuses once
+        // the dataSync budget is spent). Nothing WorkManager can do changes that — so the
+        // user is told, the tap opens the app (always allowed), and the back-off retries.
+        SpeedMeterService.notifyPaused(applicationContext)
+        return Result.retry()
     }
 }
 

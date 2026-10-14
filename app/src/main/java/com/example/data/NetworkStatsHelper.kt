@@ -4,7 +4,6 @@ import android.app.AppOpsManager
 import android.app.usage.NetworkStatsManager
 import android.content.Context
 import android.net.NetworkCapabilities
-import android.os.Build
 import android.os.Process
 import java.util.Calendar
 
@@ -31,17 +30,13 @@ data class TransportBytes(
 class NetworkStatsHelper(private val context: Context) {
 
     fun isPermissionGranted(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-            val mode = appOps.checkOpNoThrow(
-                AppOpsManager.OPSTR_GET_USAGE_STATS,
-                Process.myUid(),
-                context.packageName
-            )
-            mode == AppOpsManager.MODE_ALLOWED
-        } else {
-            true
-        }
+        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val mode = appOps.checkOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            context.packageName
+        )
+        return mode == AppOpsManager.MODE_ALLOWED
     }
 
     /** Mobile (cellular) bytes since midnight. */
@@ -60,17 +55,13 @@ class NetworkStatsHelper(private val context: Context) {
     private fun getBytesSinceMidnight(transport: Int): TransportBytes {
         if (!isPermissionGranted()) return TransportBytes()
         return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val statsManager =
-                    context.getSystemService(Context.NETWORK_STATS_SERVICE) as? NetworkStatsManager
-                        ?: return TransportBytes()
-                val start = getMidnightTimeInMillis()
-                val end = System.currentTimeMillis()
-                val bucket = statsManager.querySummaryForDevice(transport, null, start, end)
-                TransportBytes(bucket.rxBytes, bucket.txBytes)
-            } else {
-                TransportBytes()
-            }
+            val statsManager =
+                context.getSystemService(Context.NETWORK_STATS_SERVICE) as? NetworkStatsManager
+                    ?: return TransportBytes()
+            val start = getMidnightTimeInMillis()
+            val end = System.currentTimeMillis()
+            val bucket = statsManager.querySummaryForDevice(transport, null, start, end)
+            TransportBytes(bucket.rxBytes, bucket.txBytes)
         } catch (e: Exception) {
             e.printStackTrace()
             TransportBytes()

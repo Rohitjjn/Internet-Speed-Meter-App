@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -99,6 +100,9 @@ import com.example.ui.util.secondary
 import com.example.ui.viewmodel.SettingsViewModel
 import com.example.util.BytesFormatter
 import com.example.util.SpeedUnit
+
+/** Widest the settings column gets; beyond this it is centred (tablets, landscape). */
+private val SettingsMaxWidth = 720.dp
 
 @Composable
 fun SettingsScreen(
@@ -175,9 +179,14 @@ fun SettingsScreen(
     ) {
         AppBackground()
 
+        // A settings list reads best as one column of limited width: on tablets and in
+        // landscape it is centred instead of stretching every card across the screen.
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .align(Alignment.TopCenter)
+                .widthIn(max = SettingsMaxWidth)
+                .fillMaxWidth()
+                .fillMaxHeight()
                 .verticalScroll(scrollState)
                 .padding(bottom = 100.dp)
         ) {
@@ -805,7 +814,7 @@ fun SettingsScreen(
                                 HorizontalDivider(color = glassBorder.copy(alpha = 0.5f))
                                 Text(
                                     text = stringResource(R.string.engine_interfaces_title),
-                                    fontSize = 9.sp,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     fontFamily = FontFamily.Monospace,
                                     letterSpacing = 1.sp,
@@ -1307,17 +1316,13 @@ fun SegmentedControl(
 }
 
 private fun checkUsageStatsPermission(context: Context): Boolean {
-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-        val mode = appOps.checkOpNoThrow(
-            AppOpsManager.OPSTR_GET_USAGE_STATS,
-            Process.myUid(),
-            context.packageName
-        )
-        mode == AppOpsManager.MODE_ALLOWED
-    } else {
-        true
-    }
+    val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+    val mode = appOps.checkOpNoThrow(
+        AppOpsManager.OPSTR_GET_USAGE_STATS,
+        Process.myUid(),
+        context.packageName
+    )
+    return mode == AppOpsManager.MODE_ALLOWED
 }
 
 private fun checkNotificationPermission(context: Context): Boolean {

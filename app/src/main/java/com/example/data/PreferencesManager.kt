@@ -84,7 +84,15 @@ data class SpeedTestResult(
     }
 }
 
-class PreferencesManager(private val context: Context) {
+/**
+ * All user preferences, on top of one Preferences DataStore. The store is injectable so
+ * tests can give every case its own file instead of sharing (and having to restore) the
+ * process-wide singleton; production code uses the default.
+ */
+class PreferencesManager(
+    context: Context,
+    private val store: DataStore<Preferences> = context.applicationContext.dataStore
+) {
 
     companion object {
         val KEY_IS_DARK_MODE = booleanPreferencesKey("is_dark_mode")
@@ -112,7 +120,7 @@ class PreferencesManager(private val context: Context) {
      * DataStore can fail to read (corrupt file, IO error). Without this guard the whole
      * preferences flow would crash the collector — so a read error degrades to defaults.
      */
-    private val data: Flow<Preferences> = context.dataStore.data.catch { error ->
+    private val data: Flow<Preferences> = store.data.catch { error ->
         if (error is IOException) emit(emptyPreferences()) else throw error
     }
 
@@ -121,7 +129,7 @@ class PreferencesManager(private val context: Context) {
     val isDarkModeFlow: Flow<Boolean?> = data.map { it[KEY_IS_DARK_MODE] }
 
     suspend fun setDarkMode(enabled: Boolean) {
-        context.dataStore.edit { it[KEY_IS_DARK_MODE] = enabled }
+        store.edit { it[KEY_IS_DARK_MODE] = enabled }
     }
 
     // ---------- Accent ----------
@@ -130,7 +138,7 @@ class PreferencesManager(private val context: Context) {
     val accentKeyFlow: Flow<String> = data.map { it[KEY_ACCENT] ?: "INK" }
 
     suspend fun setAccentKey(key: String) {
-        context.dataStore.edit { it[KEY_ACCENT] = key }
+        store.edit { it[KEY_ACCENT] = key }
     }
 
     // ---------- Speed display unit ----------
@@ -138,7 +146,7 @@ class PreferencesManager(private val context: Context) {
     val speedUnitFlow: Flow<SpeedUnit> = data.map { SpeedUnit.fromKey(it[KEY_SPEED_UNIT]) }
 
     suspend fun setSpeedUnit(unit: SpeedUnit) {
-        context.dataStore.edit { it[KEY_SPEED_UNIT] = unit.key }
+        store.edit { it[KEY_SPEED_UNIT] = unit.key }
     }
 
     // ---------- Last known live speed (status-bar continuity) ----------
@@ -148,7 +156,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     suspend fun saveLastSpeed(downloadBps: Long, uploadBps: Long) {
-        context.dataStore.edit {
+        store.edit {
             it[KEY_LAST_SPEED_DOWN] = downloadBps.coerceAtLeast(0L)
             it[KEY_LAST_SPEED_UP] = uploadBps.coerceAtLeast(0L)
         }
@@ -161,7 +169,7 @@ class PreferencesManager(private val context: Context) {
     val mobileLimitUnitFlow: Flow<String> = data.map { it[KEY_MOBILE_LIMIT_UNIT] ?: "GB" }
 
     suspend fun saveMobileLimit(limit: Double, unit: String) {
-        context.dataStore.edit {
+        store.edit {
             it[KEY_MOBILE_LIMIT] = limit
             it[KEY_MOBILE_LIMIT_UNIT] = unit
         }
@@ -174,7 +182,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     suspend fun setOnboardingCompleted(completed: Boolean) {
-        context.dataStore.edit { it[KEY_ONBOARDING_COMPLETED] = completed }
+        store.edit { it[KEY_ONBOARDING_COMPLETED] = completed }
     }
 
     // ---------- "Reset today" baselines ----------
@@ -190,7 +198,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     suspend fun saveResetOffsets(offsets: ResetOffsets) {
-        context.dataStore.edit {
+        store.edit {
             it[KEY_RESET_DATE] = offsets.date
             it[KEY_RESET_MOBILE_RX] = offsets.mobileRx
             it[KEY_RESET_MOBILE_TX] = offsets.mobileTx
@@ -200,7 +208,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     suspend fun clearResetOffsets() {
-        context.dataStore.edit {
+        store.edit {
             it[KEY_RESET_DATE] = ""
             it[KEY_RESET_MOBILE_RX] = 0L
             it[KEY_RESET_MOBILE_TX] = 0L
@@ -220,7 +228,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     suspend fun saveDismissedMobileAlert(level: Long, date: String) {
-        context.dataStore.edit {
+        store.edit {
             it[KEY_LAST_DISMISSED_MOBILE_ALERT] = level
             it[KEY_LAST_DISMISSED_ALERT_DATE] = date
         }
@@ -233,7 +241,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     suspend fun saveSpeedTestResult(result: SpeedTestResult, keep: Int = 20) {
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             val existing = SpeedTestResult.decode(prefs[KEY_SPEED_TEST_RESULTS])
             val updated = (listOf(result) + existing).take(keep)
             prefs[KEY_SPEED_TEST_RESULTS] = SpeedTestResult.encode(updated)
@@ -241,7 +249,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     suspend fun clearSpeedTestResults() {
-        context.dataStore.edit { it[KEY_SPEED_TEST_RESULTS] = "" }
+        store.edit { it[KEY_SPEED_TEST_RESULTS] = "" }
     }
 
     // ---------- Active speed-test endpoint ----------
@@ -259,7 +267,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     suspend fun saveTestServer(preference: String, customUrl: String, flavour: String) {
-        context.dataStore.edit {
+        store.edit {
             it[KEY_TEST_SERVER] = preference
             it[KEY_TEST_SERVER_URL] = customUrl
             it[KEY_TEST_SERVER_FLAVOUR] = flavour

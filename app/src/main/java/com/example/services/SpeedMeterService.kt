@@ -21,6 +21,7 @@ import android.os.IBinder
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.createBitmap
 import androidx.core.graphics.drawable.IconCompat
 import com.example.MainActivity
 import com.example.R
@@ -143,6 +144,10 @@ class SpeedMeterService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "speed_meter_channel"
 
+        /** "Meter paused" — a separate, dismissible notification on its own quiet channel. */
+        private const val PAUSED_NOTIFICATION_ID = 1002
+        private const val STATUS_CHANNEL_ID = "speed_meter_status"
+
         /** Status-bar glyph canvas size (px). */
         private const val ICON_SIZE = 144
 
@@ -178,14 +183,79 @@ class SpeedMeterService : Service() {
         private val _permissionGrantedFlow = MutableStateFlow(false)
         val permissionGrantedFlow: StateFlow<Boolean> = _permissionGrantedFlow.asStateFlow()
 
-        fun startService(context: Context) {
-            try {
+        /**
+         * Asks the OS to (re)start the meter. Returns `false` when the start was refused:
+         * Android 12+ blocks foreground-service starts from the background unless the user
+         * just interacted with the app, and Android 15+ refuses a `dataSync` start once its
+         * daily budget is spent. Callers that run in the background use [notifyPaused] so
+         * the user learns that nothing is being measured instead of assuming it is.
+         */
+        fun startService(context: Context): Boolean {
+            return try {
                 ContextCompat.startForegroundService(context, Intent(context, SpeedMeterService::class.java))
+                true
             } catch (e: Exception) {
-                // Background start blocked by the OS (Android 14/15+); the WorkManager
-                // watchdog or the next app open will (re)start the service.
+                e.printStackTrace()
+                false
+            }
+        }
+
+        /**
+         * Tells the user the meter is **not** running and why, with a tap that opens the
+         * app — an app in the foreground may always start its own foreground service, so
+         * that tap is the one restart path the OS never refuses. Quiet channel, replaces
+         * itself in place, never shows a number (nothing is measured while paused).
+         */
+        fun notifyPaused(context: Context) {
+            try {
+                val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    nm.createNotificationChannel(
+                        NotificationChannel(
+                            STATUS_CHANNEL_ID,
+                            context.getString(R.string.notification_status_channel_name),
+                            NotificationManager.IMPORTANCE_LOW
+                        ).apply { setShowBadge(false) }
+                    )
+                }
+                val text = context.getString(R.string.notification_paused_text)
+                val notification = NotificationCompat.Builder(context, STATUS_CHANNEL_ID)
+                    .setSmallIcon(R.drawable.ic_network_icon)
+                    .setContentTitle(context.getString(R.string.notification_paused_title))
+                    .setContentText(text)
+                    .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                    .setContentIntent(openAppPendingIntent(context))
+                    .setCategory(NotificationCompat.CATEGORY_STATUS)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setOnlyAlertOnce(true)
+                    .setAutoCancel(true)
+                    .build()
+                nm.notify(PAUSED_NOTIFICATION_ID, notification)
+            } catch (e: Exception) {
+                // No notification permission / disabled channel: nothing else to do.
                 e.printStackTrace()
             }
+        }
+
+        fun clearPausedNotification(context: Context) {
+            try {
+                (context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)
+                    ?.cancel(PAUSED_NOTIFICATION_ID)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        private fun openAppPendingIntent(context: Context): PendingIntent {
+            val intent = Intent(context, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            return PendingIntent.getActivity(
+                context,
+                0,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
         }
 
         fun stopService(context: Context) {
@@ -222,7 +292,13 @@ class SpeedMeterService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         _isServiceRunning.value = true
-        startForegroundWithNotification()
+        if (startForegroundWithNotification()) {
+            clearPausedNotification(this)
+        } else {
+            // `startForeground` itself was refused (API 35+ dataSync budget, or a
+            // background-start rule): the service is stopping — say so.
+            notifyPaused(this)
+        }
         return START_STICKY
     }
 
@@ -237,6 +313,7 @@ class SpeedMeterService : Service() {
      * refused anyway) and stop right away. The 60-minute watchdog stays scheduled too.
      */
     private fun handleTimeout(startId: Int) {
+        notifyPaused(this)
         ServiceScheduler.scheduleRetry(this)
         stopSelf(startId)
     }
@@ -636,14 +713,16 @@ class SpeedMeterService : Service() {
         }
     }
 
-    private fun startForegroundWithNotification() {
+    /** Promotes the service; returns `false` (and stops it) when the OS refused. */
+    private fun startForegroundWithNotification(): Boolean {
         val notification = buildSpeedNotification(engine.snapshot())
-        try {
+        return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
+            true
         } catch (e: Exception) {
             e.printStackTrace()
             try {
@@ -651,6 +730,7 @@ class SpeedMeterService : Service() {
             } catch (ex: Exception) {
                 ex.printStackTrace()
             }
+            false
         }
     }
 
@@ -734,17 +814,7 @@ class SpeedMeterService : Service() {
         }
     }
 
-    private fun openAppIntent(): PendingIntent {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        }
-        return PendingIntent.getActivity(
-            this,
-            0,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-    }
+    private fun openAppIntent(): PendingIntent = openAppPendingIntent(this)
 
     /**
      * Custom status-bar icon: the live download speed as text (the signature look
@@ -796,7 +866,7 @@ class SpeedMeterService : Service() {
         iconBufferIndex = (iconBufferIndex + 1) % iconBuffers.size
         val existing = iconBuffers[iconBufferIndex]
         if (existing != null) return existing
-        val bitmap = Bitmap.createBitmap(ICON_SIZE, ICON_SIZE, Bitmap.Config.ARGB_8888)
+        val bitmap = createBitmap(ICON_SIZE, ICON_SIZE)
         val created = IconBuffer(bitmap, Canvas(bitmap), Paint().apply {
             color = Color.WHITE
             isAntiAlias = true

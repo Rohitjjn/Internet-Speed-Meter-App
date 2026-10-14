@@ -473,7 +473,7 @@ fun PinnedMonthlySummaryCard(
                         } else {
                             stringResource(R.string.history_this_month_named, monthLabel.uppercase(Locale.getDefault()))
                         },
-                        fontSize = 9.sp,
+                        fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.2.sp,

@@ -561,7 +561,7 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
             ) {
                 Text(
                     text = stringResource(R.string.hero_last_30_seconds),
-                    fontSize = 8.5.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
                     letterSpacing = 1.sp,
@@ -587,7 +587,7 @@ fun HeroSpeedCard(modifier: Modifier = Modifier) {
                         isRunning -> stringResource(R.string.hero_status_realtime)
                         else -> stringResource(R.string.hero_status_waiting)
                     },
-                    fontSize = 8.5.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
                     letterSpacing = 1.sp,
@@ -615,7 +615,7 @@ private fun LiveStat(
     Column {
         Text(
             text = label,
-            fontSize = 8.5.sp,
+            fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
             fontFamily = FontFamily.Monospace,
             letterSpacing = 0.9.sp,
@@ -631,7 +631,7 @@ private fun LiveStat(
         )
         Text(
             text = sub,
-            fontSize = 9.sp,
+            fontSize = 10.sp,
             fontFamily = FontFamily.Monospace,
             color = secondary()
         )
@@ -668,7 +668,7 @@ private fun TransportSpeedChip(
         Column {
             Text(
                 text = label,
-                fontSize = 8.5.sp,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
                 letterSpacing = 0.9.sp,
@@ -676,7 +676,7 @@ private fun TransportSpeedChip(
             )
             Text(
                 text = "↓ ${SpeedFormatter.format(downloadBps, speedUnit)}  ↑ ${SpeedFormatter.format(uploadBps, speedUnit)}",
-                fontSize = 9.5.sp,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
                 color = if (active) MaterialTheme.colorScheme.onBackground else secondary()
@@ -830,7 +830,7 @@ fun UsageCard(
             Spacer(modifier = Modifier.height(14.dp))
             Text(
                 text = stringResource(R.string.label_today),
-                fontSize = 9.sp,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
                 letterSpacing = 1.sp,
@@ -889,7 +889,7 @@ private fun MiniStat(
         Column {
             Text(
                 text = label,
-                fontSize = 8.5.sp,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
                 letterSpacing = 0.8.sp,
@@ -970,7 +970,7 @@ fun TotalCard(
                 ) {
                     Text(
                         text = stringResource(R.string.total_mobile_limit, limitLabel),
-                        fontSize = 9.sp,
+                        fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace,
                         letterSpacing = 0.8.sp,
@@ -1031,7 +1031,7 @@ private fun MiniStatOnInk(
         Column {
             Text(
                 text = label,
-                fontSize = 8.5.sp,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
                 letterSpacing = 0.8.sp,

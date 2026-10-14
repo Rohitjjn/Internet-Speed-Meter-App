@@ -14,9 +14,14 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-class SettingsViewModel(application: Application) : AndroidViewModel(application) {
+class SettingsViewModel(
+    application: Application,
+    private val preferencesManager: PreferencesManager
+) : AndroidViewModel(application) {
 
-    private val preferencesManager = PreferencesManager(application)
+    /** The constructor the default `ViewModelProvider` factory uses. */
+    constructor(application: Application) : this(application, PreferencesManager(application))
+
     private val applicationContext = application
 
     val isDarkMode: StateFlow<Boolean?> = preferencesManager.isDarkModeFlow

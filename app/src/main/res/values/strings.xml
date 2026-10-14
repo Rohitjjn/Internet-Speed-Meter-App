@@ -10,6 +10,9 @@
     <string name="notification_speed_title">↓ %1$s  ↑ %2$s</string>
     <string name="notification_text">%1$s · Today %2$s</string>
     <string name="notification_paused_suffix"> · paused</string>
+    <string name="notification_status_channel_name">Meter status</string>
+    <string name="notification_paused_title">Speed meter paused</string>
+    <string name="notification_paused_text">Android stopped the background meter (daily limit for background services). Nothing is counted while it is paused — tap to resume.</string>
 
     <!-- Network names (notification + chips) -->
     <string name="network_wifi">Wi-Fi</string>

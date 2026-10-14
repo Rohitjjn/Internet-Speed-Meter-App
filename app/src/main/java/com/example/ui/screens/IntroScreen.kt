@@ -427,7 +427,6 @@ private fun PermissionTile(
 }
 
 private fun checkUsageStatsPermissionLocal(context: android.content.Context): Boolean {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
     val appOps = context.getSystemService(android.content.Context.APP_OPS_SERVICE) as android.app.AppOpsManager
     val mode = appOps.checkOpNoThrow(
         android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,

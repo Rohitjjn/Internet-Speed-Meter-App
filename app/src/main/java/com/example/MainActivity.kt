@@ -35,6 +35,19 @@ enum class AppStage {
 
 class MainActivity : ComponentActivity() {
 
+    /**
+     * Coming back to the app is the one moment the OS always lets it start its foreground
+     * service (Android 12+ background-start rule, Android 15+ dataSync budget). So if the
+     * meter was stopped in the meantime — timeout, OEM task killer — it is revived here
+     * instead of staying "paused" until the next cold start.
+     */
+    override fun onResume() {
+        super.onResume()
+        if (!SpeedMeterService.isServiceRunning.value) {
+            SpeedMeterService.startService(applicationContext)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

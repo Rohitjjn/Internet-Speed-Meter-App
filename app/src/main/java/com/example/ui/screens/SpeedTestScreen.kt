@@ -42,6 +42,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -51,7 +52,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -122,6 +125,17 @@ fun SpeedTestScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val history by viewModel.history.collectAsState()
+
+    // One light tick when a *new* result lands (not when the tab is re-entered with an old
+    // one): the same tactile language as the limit warning, no permission involved.
+    val haptics = LocalHapticFeedback.current
+    var lastResultTick by remember { mutableLongStateOf(state.finishedAtMillis) }
+    LaunchedEffect(state.phase, state.finishedAtMillis) {
+        if (state.phase == SpeedTestPhase.DONE && state.finishedAtMillis != lastResultTick) {
+            lastResultTick = state.finishedAtMillis
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
+    }
 
     val isDark = isDarkModeActive()
     val palette = GaugePalette(
@@ -266,7 +280,7 @@ private fun GaugeCard(state: SpeedTestState, palette: GaugePalette) {
                 } else {
                     state.server
                 },
-                fontSize = 9.sp,
+                fontSize = 10.sp,
                 fontFamily = FontFamily.Monospace,
                 color = secondary().copy(alpha = 0.75f),
                 modifier = Modifier.testTag("speed_test_server_label")
@@ -341,7 +355,7 @@ private fun ResultOrErrorCard(state: SpeedTestState, palette: GaugePalette, topP
                 ) {
                     Text(
                         text = stringResource(R.string.test_latest_result),
-                        fontSize = 9.sp,
+                        fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.sp,
                         fontFamily = FontFamily.Monospace,
@@ -718,7 +732,7 @@ private fun SpeedGauge(state: SpeedTestState, palette: GaugePalette) {
     val ghostColor = secondary().copy(alpha = 0.45f)
     val measurer = rememberTextMeasurer()
     val labelStyle = TextStyle(
-        fontSize = 9.sp,
+        fontSize = 10.sp,
         fontFamily = FontFamily.Monospace,
         color = secondary()
     )
@@ -868,7 +882,7 @@ private fun SpeedGauge(state: SpeedTestState, palette: GaugePalette) {
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = scaleText,
-                fontSize = 8.sp,
+                fontSize = 10.sp,
                 fontFamily = FontFamily.Monospace,
                 letterSpacing = 0.5.sp,
                 color = secondary().copy(alpha = 0.7f)
@@ -879,7 +893,7 @@ private fun SpeedGauge(state: SpeedTestState, palette: GaugePalette) {
                         R.string.gauge_ghost_legend,
                         SpeedFormatter.formatBits(state.ghostBitsPerSecond ?: 0.0)
                     ),
-                    fontSize = 8.sp,
+                    fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace,
                     letterSpacing = 0.5.sp,
                     color = ghostColor,
@@ -979,7 +993,7 @@ private fun MetricTile(
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             text = label,
-            fontSize = 9.sp,
+            fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = 1.sp,
             fontFamily = FontFamily.Monospace,

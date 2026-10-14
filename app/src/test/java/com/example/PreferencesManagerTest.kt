@@ -10,6 +10,7 @@ import com.example.util.SpeedUnit
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -29,12 +30,20 @@ import org.robolectric.annotation.Config
 @Config(sdk = [36])
 class PreferencesManagerTest {
 
+    private lateinit var isolated: TestPreferences
     private lateinit var preferences: PreferencesManager
 
     @Before
     fun setUp() {
         val application = ApplicationProvider.getApplicationContext<Application>()
-        preferences = PreferencesManager(application)
+        // Own DataStore file per test: defaults are really defaults, nothing leaks out.
+        isolated = TestPreferences(application)
+        preferences = isolated.manager
+    }
+
+    @After
+    fun tearDown() {
+        isolated.close()
     }
 
     @Test

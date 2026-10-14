@@ -22,7 +22,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -58,6 +57,7 @@ class SpeedTestViewModelTest {
 
     private val dispatcher = StandardTestDispatcher()
     private lateinit var application: Application
+    private lateinit var isolated: TestPreferences
     private lateinit var preferences: PreferencesManager
     private lateinit var connectivity: FakeConnectivity
     private lateinit var runner: FakeRunner
@@ -66,22 +66,17 @@ class SpeedTestViewModelTest {
     fun setUp() {
         Dispatchers.setMain(dispatcher)
         application = ApplicationProvider.getApplicationContext()
-        preferences = PreferencesManager(application)
+        // Own DataStore file per test: AUTO endpoint and an empty history are the real
+        // defaults here, not something restored from a shared singleton.
+        isolated = TestPreferences(application)
+        preferences = isolated.manager
         connectivity = FakeConnectivity()
         runner = FakeRunner()
-        // The DataStore file survives between tests in one JVM: start from a known state.
-        runBlocking {
-            preferences.clearSpeedTestResults()
-            preferences.saveTestServer(SpeedTestServers.ID_AUTO, "", SpeedTestServers.FLAVOUR_CLOUDFLARE)
-        }
     }
 
     @After
     fun tearDown() {
-        runBlocking {
-            preferences.clearSpeedTestResults()
-            preferences.saveTestServer(SpeedTestServers.ID_AUTO, "", SpeedTestServers.FLAVOUR_CLOUDFLARE)
-        }
+        isolated.close()
         Dispatchers.resetMain()
     }
 

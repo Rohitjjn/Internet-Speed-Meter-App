@@ -9,7 +9,6 @@ import com.example.util.SpeedUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -34,6 +33,7 @@ class SettingsViewModelTest {
 
     private val dispatcher = StandardTestDispatcher()
     private lateinit var application: Application
+    private lateinit var isolated: TestPreferences
     private lateinit var preferences: PreferencesManager
     private lateinit var viewModel: SettingsViewModel
 
@@ -41,19 +41,15 @@ class SettingsViewModelTest {
     fun setUp() {
         Dispatchers.setMain(dispatcher)
         application = ApplicationProvider.getApplicationContext()
-        preferences = PreferencesManager(application)
-        viewModel = SettingsViewModel(application)
+        // Own DataStore file per test (no shared singleton to restore afterwards).
+        isolated = TestPreferences(application)
+        preferences = isolated.manager
+        viewModel = SettingsViewModel(application, preferences)
     }
 
     @After
     fun tearDown() {
-        // The DataStore file is shared by every Robolectric test in this JVM: leave the
-        // defaults behind so no other test inherits a limit or an endpoint from here.
-        runBlocking {
-            preferences.saveTestServer(SpeedTestServers.ID_AUTO, "", SpeedTestServers.FLAVOUR_CLOUDFLARE)
-            preferences.saveMobileLimit(0.0, "GB")
-            preferences.setSpeedUnit(SpeedUnit.BYTES)
-        }
+        isolated.close()
         Dispatchers.resetMain()
     }
 

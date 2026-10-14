@@ -10,6 +10,9 @@
     <string name="notification_speed_title">↓ %1$s  ↑ %2$s</string>
     <string name="notification_text">%1$s · आज %2$s</string>
     <string name="notification_paused_suffix"> · रुका हुआ</string>
+    <string name="notification_status_channel_name">मीटर स्थिति</string>
+    <string name="notification_paused_title">स्पीड मीटर रुका हुआ है</string>
+    <string name="notification_paused_text">Android ने बैकग्राउंड मीटर रोक दिया (बैकग्राउंड सेवाओं की दैनिक सीमा)। रुके रहने के दौरान कुछ भी गिना नहीं जाता — फिर से शुरू करने के लिए टैप करें।</string>
 
     <!-- Network names (notification + chips) -->
     <string name="network_wifi">Wi-Fi</string>

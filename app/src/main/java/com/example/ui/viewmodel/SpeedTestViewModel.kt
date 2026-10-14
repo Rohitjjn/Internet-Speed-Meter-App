@@ -21,7 +21,6 @@ import com.example.services.TestServer
 import com.example.services.Transport
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -232,16 +231,11 @@ class SpeedTestViewModel(
             )
 
             // Watch the transport for the whole run: switching networks mid-test would mix
-            // two different connections (and could silently spend mobile data).
+            // two different connections (and could silently spend mobile data). The flow is
+            // pushed by the OS on a device (polled only by fakes / as a fallback).
             val transportWatcher = launch {
-                while (isActive) {
-                    delay(TRANSPORT_POLL_MS)
-                    val now = connectivity.currentTransport()
-                    if (now != transportAtStart) {
-                        abort.abort(app.getString(R.string.test_error_network_changed, networkName(now)))
-                        break
-                    }
-                }
+                val changed = connectivity.transportChanges(TRANSPORT_POLL_MS).first { it != transportAtStart }
+                abort.abort(app.getString(R.string.test_error_network_changed, networkName(changed)))
             }
 
             try {
@@ -257,6 +251,9 @@ class SpeedTestViewModel(
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Exception) {
+                        // A socket cut by the abort sentinel surfaces as an IO failure: that
+                        // is the abort, not a broken endpoint (and never a reason to fall back).
+                        if (abort.isAborted) throw TestAbortedException(abort.reason ?: app.getString(R.string.test_stopped))
                         lastError = error
                         // Only a *reachability* failure falls through to the next endpoint
                         // (the latency probe is the cheapest proof that it cannot be reached);
@@ -438,7 +435,7 @@ class SpeedTestViewModel(
     }
 
     companion object {
-        /** How often the transport is re-read while a test runs. */
-        const val TRANSPORT_POLL_MS = 700L
+        /** Poll cadence of the fallback transport watcher (the device path is pushed). */
+        const val TRANSPORT_POLL_MS = Connectivity.DEFAULT_POLL_MS
     }
 }

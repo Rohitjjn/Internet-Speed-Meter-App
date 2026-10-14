@@ -137,7 +137,10 @@ interface SpeedTestRunner {
  *    round trip, not a fresh TLS handshake); jitter = mean absolute difference of
  *    consecutive samples.
  *  - **Download** — several parallel `GET` streams, counting the bytes that actually
- *    arrive, for a fixed time budget.
+ *    arrive, for a fixed time budget. A stream that finishes its request quickly asks for
+ *    a bigger one next time ([nextRequestBytes]) and reuses the kept-alive socket, so a
+ *    gigabit line is measured with the pipe full instead of being spent on request
+ *    setup and TCP slow start over and over.
  *  - **Upload** — one small fixed-length `POST` the server must **acknowledge** (HTTP
  *    2xx/3xx), then several parallel chunked `POST` streams, counting the bytes the socket
  *    accepted. A proxy or captive portal that swallows uploads therefore fails the test
@@ -187,6 +190,15 @@ object SpeedTestEngine {
 
     /** Size of the fixed-length upload the server has to acknowledge before the streams start. */
     const val UPLOAD_ACK_BYTES = 32 * 1024
+
+    /** First download request per stream (bytes); see [nextRequestBytes]. */
+    const val INITIAL_REQUEST_BYTES = 20_000_000L
+
+    /** Largest single download request (both endpoint flavours serve this comfortably). */
+    const val MAX_REQUEST_BYTES = 100_000_000L
+
+    /** A request that completes faster than this is too small to keep a fast line busy. */
+    const val FAST_REQUEST_MS = 1_000L
 
     /** Round-trip latency + jitter. Throws [SpeedTestException] when the server is unreachable. */
     suspend fun measureLatency(
@@ -297,15 +309,18 @@ object SpeedTestEngine {
             val jobs = (0 until streams).map { index ->
                 launch(Dispatchers.IO) {
                     var request = 0
+                    var requestBytes = INITIAL_REQUEST_BYTES + index * 1_000_000L
                     while (isActive && !abort.isAborted && elapsedMs(startNs) < durationMs) {
-                        // A different size per request keeps caches/proxies honest.
-                        val size = 20_000_000L + index * 1_000_000L + request * 250_000L
+                        // A slightly different size per request keeps caches/proxies honest.
+                        val size = requestBytes + request * 250_000L
                         val connection = try {
                             open(server.downloadUrl(size))
                         } catch (e: Exception) {
                             return@launch
                         }
                         connections.track(connection)
+                        val requestStartNs = System.nanoTime()
+                        var bodyComplete = false
                         try {
                             connection.inputStream.use { input ->
                                 val buffer = ByteArray(BUFFER_SIZE)
@@ -315,7 +330,11 @@ object SpeedTestEngine {
                                     } catch (e: Exception) {
                                         -1
                                     }
-                                    if (read <= 0) break
+                                    if (read < 0) {
+                                        bodyComplete = true
+                                        break
+                                    }
+                                    if (read == 0) continue
                                     if (firstByteNs.get() == 0L) {
                                         firstByteNs.compareAndSet(0L, System.nanoTime())
                                     }
@@ -327,8 +346,16 @@ object SpeedTestEngine {
                             // is real data and stays counted.
                         } finally {
                             connections.untrack(connection)
-                            runCatching { connection.disconnect() }
+                            // A fully read body leaves a warm keep-alive socket in the pool —
+                            // the next request skips TCP/TLS setup and slow start. A body cut
+                            // off by the deadline must be disconnected instead.
+                            if (!bodyComplete) runCatching { connection.disconnect() }
                         }
+                        requestBytes = nextRequestBytes(
+                            previousBytes = requestBytes,
+                            completedInMs = (System.nanoTime() - requestStartNs) / 1_000_000L,
+                            bodyComplete = bodyComplete
+                        )
                         request++
                     }
                 }
@@ -382,7 +409,7 @@ object SpeedTestEngine {
         val connections = ConnectionSet()
         coroutineScope {
             val sentinel = launchAbortSentinel(abort, connections)
-            val ackCode = acknowledgeUpload(uploadUrl, server.host, connections)
+            val ackCode = acknowledgeUpload(uploadUrl, server.host, connections, abort)
             abort.throwIfAborted()
 
             val counter = AtomicLong(0L)
@@ -452,7 +479,12 @@ object SpeedTestEngine {
      * "this endpoint does not really take uploads" and the phase fails instead of
      * measuring how fast a proxy discards bytes.
      */
-    private fun acknowledgeUpload(uploadUrl: String, host: String, connections: ConnectionSet): Int {
+    private fun acknowledgeUpload(
+        uploadUrl: String,
+        host: String,
+        connections: ConnectionSet,
+        abort: TestAbortSignal
+    ): Int {
         val connection = try {
             open(uploadUrl).apply {
                 requestMethod = "POST"
@@ -461,6 +493,7 @@ object SpeedTestEngine {
                 setRequestProperty("Content-Type", "application/octet-stream")
             }
         } catch (e: Exception) {
+            abort.throwIfAborted()
             throw SpeedTestException(
                 SpeedTestFailure.UPLOAD_NOT_ACKNOWLEDGED, host,
                 message = "$host did not acknowledge the upload"
@@ -483,6 +516,9 @@ object SpeedTestEngine {
         } catch (e: SpeedTestException) {
             throw e
         } catch (e: Exception) {
+            // The sentinel cuts this socket too when the run is aborted: report the abort,
+            // not a server that "did not acknowledge".
+            abort.throwIfAborted()
             throw SpeedTestException(
                 SpeedTestFailure.UPLOAD_NOT_ACKNOWLEDGED, host,
                 message = "$host did not acknowledge the upload"
@@ -519,7 +555,10 @@ object SpeedTestEngine {
             delay(PROGRESS_INTERVAL_MS)
             val nowNs = System.nanoTime()
             val bytes = counter.get()
-            if (graceNs == 0L && firstByteNs.get() > 0L && (nowNs - startNs) / 1_000_000L >= graceMs) {
+            // The warm-up is counted from the first byte (slow start begins there), not
+            // from the moment the request was sent.
+            val firstByte = firstByteNs.get()
+            if (graceNs == 0L && firstByte > 0L && (nowNs - firstByte) / 1_000_000L >= graceMs) {
                 graceNs = nowNs
                 graceBytes = bytes
             }
@@ -581,6 +620,18 @@ object SpeedTestEngine {
             streams = streams,
             totalBytes = totalBytes
         )
+    }
+
+    /**
+     * Pure request-sizing rule (unit-tested in `SpeedTestMathTest`): a body that was read
+     * to the end in under [FAST_REQUEST_MS] doubles the next request (up to
+     * [MAX_REQUEST_BYTES]) so a fast line spends its time receiving, not re-requesting.
+     * A body that took longer, or was cut off by the deadline, keeps its size — on a slow
+     * line the first byte matters more than the request length.
+     */
+    internal fun nextRequestBytes(previousBytes: Long, completedInMs: Long, bodyComplete: Boolean): Long {
+        if (!bodyComplete || completedInMs >= FAST_REQUEST_MS) return previousBytes
+        return (previousBytes * 2L).coerceAtMost(MAX_REQUEST_BYTES)
     }
 
     /**

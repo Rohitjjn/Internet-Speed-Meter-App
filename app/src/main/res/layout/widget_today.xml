@@ -29,7 +29,7 @@
             android:letterSpacing="0.15"
             android:text="@string/widget_today"
             android:textColor="@color/widget_text_secondary"
-            android:textSize="10sp"
+            android:textSize="11sp"
             android:textStyle="bold" />
 
         <ImageView
@@ -73,5 +73,5 @@
         android:maxLines="1"
         android:text="@string/widget_placeholder"
         android:textColor="@color/widget_text_tertiary"
-        android:textSize="9sp" />
+        android:textSize="11sp" />
 </LinearLayout>
